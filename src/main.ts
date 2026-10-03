@@ -53,8 +53,6 @@ fitLogo();
 addEventListener('resize', fitLogo);
 const rev = typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev';
 $('build').textContent = `build ${rev}`;
-// The source of exactly this build: export refuses to publish a commit that is not on GitHub.
-if (rev !== 'dev') $<HTMLAnchorElement>('source').href = `https://github.com/m0dE/doom-town/tree/${rev}`;
 
 // Everything a match needs starts downloading now.
 prefetch();

@@ -24,8 +24,9 @@ first, then the code.
 - The published bundle carries `LICENSE.txt`, `COPYING-FREEDOOM.txt` and `source.zip`
   (the full corresponding source of this directory) — that is how GPL §3(a) is met for a
   web build, without depending on GitHub. The menu's footer does not link the zip: its
-  Source code link goes to the built commit on github.com/m0dE/doom-town, and
-  `npm run export` refuses uncommitted or unpushed work so that link always resolves.
+  Source code link goes to the repository home, github.com/m0dE/doom-town (never a
+  commit tree), and the footer's `build <rev>` names the built commit; `npm run export`
+  refuses uncommitted or unpushed work so that commit is always on GitHub.
 
 ## Layout
 

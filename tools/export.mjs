@@ -11,10 +11,14 @@
  *   export/doom-town.zip       the upload: deterministic (fixed timestamps, sorted entries)
  *   export/BUILD.txt        what this build is: commit, app id, sizes, sha256
  *
- * The site carries LICENSE.txt and the Freedoom data's COPYING and CREDITS;
- * the start screen's footer links the source of exactly this build, the built
- * commit on https://github.com/m0dE/doom-town - which is why export refuses a
- * dirty tree or a commit that is not pushed.
+ * The site carries what GPL-2.0 §3(a) asks of a web build: LICENSE.txt, the
+ * Freedoom data's COPYING and CREDITS, and source.zip - the complete
+ * corresponding source of games/doom as it was built (tracked and untracked
+ * files, minus what .gitignore excludes and minus export/), on the same server
+ * as the game so it does not depend on GitHub. The start screen's footer does
+ * not link the zip; its Source code link goes to the built commit on
+ * https://github.com/m0dE/doom-town - which is why export refuses a dirty tree
+ * or a commit that is not pushed.
  *
  * arrr.fun's rules, checked here before an upload rather than after: index.html
  * at the zip root, at most 5000 files and 100 MiB inflated, no absolute asset
@@ -50,7 +54,7 @@ if (!flag('no-build')) {
 }
 if (!existsSync(path.join(SITE, 'index.html'))) fail(`no index.html in ${SITE} — run without --no-build`);
 
-// ---------------------------------------------------------------------------- licences
+// ---------------------------------------------------------------------------- licences + source
 
 copyFileSync(path.join(ROOT, 'LICENSE'), path.join(SITE, 'LICENSE.txt'));
 copyFileSync(path.join(ROOT, 'assets', 'COPYING-FREEDOOM.txt'), path.join(SITE, 'COPYING-FREEDOOM.txt'));
@@ -61,8 +65,8 @@ try { head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, 
 let dirty = false;
 try { dirty = execFileSync('git', ['status', '--porcelain', '--', '.'], { cwd: ROOT, encoding: 'utf8' }).trim() !== ''; } catch { /* not a checkout */ }
 
-// GPL-2.0 §3: the footer's Source code link points at this commit on GitHub, so only
-// publish what is committed and pushed there - otherwise that link is not the source.
+// The footer's Source code link points at this commit on GitHub, so only publish what
+// is committed and pushed there - otherwise that link would not be this build's source.
 if (!flag('unpublished')) {
   if (head === 'dev') fail('not a git checkout, so the footer cannot link this build\'s source (--unpublished to build anyway)');
   if (dirty) fail('uncommitted changes would not be in the linked source on GitHub; commit and push first (--unpublished to build anyway)');
@@ -70,6 +74,42 @@ if (!flag('unpublished')) {
   try { pushed = execFileSync('git', ['branch', '-r', '--contains', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { /* no remote */ }
   if (!pushed) fail(`commit ${head} is not on any remote branch; push it first so the footer's source link resolves (--unpublished to build anyway)`);
 }
+
+/** The source files of games/doom as built: tracked + untracked-but-not-ignored, never export/. */
+function sourceFiles() {
+  let list;
+  try {
+    list = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'], { cwd: ROOT, encoding: 'utf8' })
+      .split('\0').filter(Boolean);
+  } catch {
+    list = walk(ROOT).filter((f) => !/^(node_modules|dist|sim\/target|\.cache)\//.test(f) && !/^assets\/.*\.(wad|zip)$/.test(f));
+  }
+  return [...new Set(list)]
+    .filter((f) => !f.startsWith('export/') && !f.startsWith('node_modules/') && !f.startsWith('docs/shots/') && existsSync(path.join(ROOT, f)) && statSync(path.join(ROOT, f)).isFile())
+    .sort();
+}
+
+const note = [
+  'Doom Town — complete corresponding source',
+  '',
+  `Built from commit ${head}${dirty ? ' plus uncommitted changes (included here as built)' : ''}.`,
+  'Public repository: https://github.com/m0dE/doom-town',
+  '',
+  'The engine is GPL-2.0-or-later (LICENSE): the simulation in sim/ is a port of',
+  "id Software's linuxdoom-1.10. Game data is Freedoom/FreeDM (BSD-3-Clause,",
+  'assets/COPYING-FREEDOOM.txt). assets/freedm.wad is not included: run',
+  '`npm run fetch` to download the pinned FreeDM release.',
+  '',
+  'Build: npm install; npm run build:sim (needs Rust + wasm32 target);',
+  'npm run pak; npm run dev (or npm run export for the web bundle).',
+  '',
+].join('\n');
+
+const srcEntries = sourceFiles().map((f) => ({ name: `doom/${f}`, data: readFileSync(path.join(ROOT, f)) }));
+srcEntries.push({ name: 'doom/SOURCE-NOTE.txt', data: Buffer.from(note) });
+srcEntries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+writeFileSync(path.join(SITE, 'source.zip'), zip(srcEntries));
+console.log(`source.zip: ${srcEntries.length} files`);
 
 // ---------------------------------------------------------------------------- check
 
@@ -91,7 +131,7 @@ if (bytes > MAX_BYTES) fail(`${mib(bytes)}; arrr.fun takes at most ${mib(MAX_BYT
 const index = readFileSync(path.join(SITE, 'index.html'), 'utf8');
 const absolute = [...index.matchAll(/(?:src|href)="(\/[^"]*)"/g)].map((m) => m[1]);
 if (absolute.length) fail(`index.html asks for ${absolute.length} file(s) by absolute path (${absolute[0]})`);
-for (const need of ['doomsim.wasm', 'freedm-lite.wad', 'LICENSE.txt', 'COPYING-FREEDOOM.txt']) {
+for (const need of ['doomsim.wasm', 'freedm-lite.wad', 'LICENSE.txt', 'COPYING-FREEDOOM.txt', 'source.zip']) {
   if (!files.includes(need)) fail(`the site has no ${need}`);
 }
 
@@ -102,8 +142,8 @@ function crcTable() {
   for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
   return t;
 }
-let CRC = null;
-function crc32(buf) { CRC ??= crcTable(); let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+// The table hangs off the (hoisted) function, so zip() works from anywhere in this file.
+function crc32(buf) { const t = (crc32.table ??= crcTable()); let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = t[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 
 /** A deterministic zip: entries in the order given, 1980-01-01 timestamps, no unix modes, no zip64. */
 function zip(entries) {

@@ -6,9 +6,9 @@
  * Doom point (x, y, z) maps to three (x, z, -y) and `object.rotation.y = angle`
  * turns him to a Doom angle.
  *
- * Sizes come from the sprite: one sprite pixel is one unit (row r of the 56-row
- * PLAYA1 spans y = 55 - r .. 56 - r). Front faces sample PLAYA1, backs PLAYA5,
- * sides PLAYA3A7 (mirrored for the right side), which is how Doom shows him.
+ * He is 56 tall like Doom's player. Faces are painted flat palette colours after the
+ * user's low-poly reference sheet (green suit, tan helmet, khaki boots); the gore
+ * (pool, bits) still samples the sprite's blood.
  *
  * Every box rides exactly one bone (rigid skinning), so the whole marine is one
  * BufferGeometry, one material and one draw call.
@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import type { PaletteData } from '../wad/index.js';
 import MESHES from './meshes.json';
-import { SpriteSource, cutRect, packAtlas, resample, shadeIndex, type FaceSpec, type FaceSource, type IndexImage, type Rect } from './texture.js';
+import { SpriteSource, cutRect, packAtlas, paintRect, resample, shadeIndex, type FaceSpec, type FaceSource, type IndexImage, type PaintSpec, type Rect } from './texture.js';
 
 export const BONES = [
   'pelvis', 'torso', 'head', 'padR', 'padL', 'uArmR', 'uArmL', 'fArmR', 'fArmL',
@@ -68,11 +68,6 @@ export interface BoxDef {
 }
 
 const S = (l: string, r: Rect, keep?: string, flip?: boolean): FaceSource => ({ l, r, keep, flip });
-const A1 = (r: Rect, keep?: string, flip?: boolean) => S('PLAYA1', r, keep, flip);
-const A5 = (r: Rect, keep?: string, flip?: boolean) => S('PLAYA5', r, keep, flip);
-/** side view (we see his left); `flip` gives rotation 7, his right */
-const A3 = (r: Rect, keep?: string, flip?: boolean) => S('PLAYA3A7', r, keep, flip);
-const sides = (f: (flip: boolean) => FaceSpec): Faces => ({ nz: f(false), pz: f(true) });
 const all = (s: FaceSpec): Faces => ({ px: s, nx: s, pz: s, nz: s, py: s, ny: s });
 const mirrorZ = (b: BoxDef, name: string, bone: number, faces: Faces): BoxDef => ({
   name, bone, faces, topShade: b.topShade,
@@ -80,90 +75,57 @@ const mirrorZ = (b: BoxDef, name: string, bone: number, faces: Faces): BoxDef =>
   max: [b.max[0], b.max[1], -b.min[2]],
 });
 
+/** the reference sheet's palette (sRGB) */
+const SUIT: RGB = [66, 150, 54], SUIT_DARK: RGB = [44, 106, 40], TAN: RGB = [170, 158, 122], VISOR: RGB = [38, 38, 44];
+const SKIN: RGB = [228, 158, 110], GLOVE: RGB = [50, 50, 55], BOOT: RGB = [152, 142, 110], SOLE: RGB = [96, 90, 72];
+const BELT: RGB = [66, 60, 48], POUCH: RGB = [132, 122, 96], GUN: RGB = [50, 50, 56], WOOD: RGB = [116, 72, 40];
+type RGB = readonly [number, number, number];
+const paint = (c: RGB, green = false): PaintSpec => ({ paint: c, green });
+
 export function defineBoxes(): BoxDef[] {
   const boxes: BoxDef[] = [];
   const add = (b: BoxDef) => { boxes.push(b); return b; };
 
+  // Painted after the low-poly reference sheet the user gave (2026-10-03): a tan helmet
+  // with a dark visor, green suit (the green ramp, so player colours still apply),
+  // bare arms, dark gloves, khaki boots, a dark gun with wood. Shapes are the Blender
+  // meshes (meshes.json); every face is flat colour in blocky shade noise.
+  const suit = paint(SUIT, true), suitDark = paint(SUIT_DARK, true);
+
   // ---- trunk -------------------------------------------------------------
-  add({ name: 'pelvis', bone: B.pelvis, min: [-8, 26.5, -9.5], max: [5, 31, 9.5], faces: {
-    px: A1([9, 27, 26, 34], 'G'), nx: A5([10, 25, 28, 33], 'G'), ...sides((f) => A3([11, 26, 25, 34], 'G', f)),
-  } });
-  add({ name: 'belt', bone: B.pelvis, min: [-8.6, 31, -9.4], max: [6.4, 34, 9.4], faces: {
-    px: A5([10, 22, 28, 25], 'AK'), nx: A5([10, 22, 28, 25], 'AK'), ...sides((f) => A5([12, 22, 26, 25], 'AK', f)),
-  } });
-  add({ name: 'torso', bone: B.torso, min: [-8, 34, -9], max: [6, 46, 9], faces: {
-    px: A1([9, 10, 27, 22], 'GA'), nx: A5([10, 10, 28, 22], 'GA'), ...sides((f) => A3([11, 10, 25, 22], 'G', f)),
-  } });
+  add({ name: 'pelvis', bone: B.pelvis, min: [-8, 26.5, -9.5], max: [5, 31, 9.5], faces: all(suit) });
+  add({ name: 'belt', bone: B.pelvis, min: [-8.6, 31, -9.4], max: [6.4, 34, 9.4], faces: { ...all(paint(BELT)), px: paint(POUCH), nx: paint(POUCH) } });
+  add({ name: 'torso', bone: B.torso, min: [-8, 34, -9], max: [6, 46, 9], faces: { ...all(suit), py: suitDark } });
 
-  // ---- head --------------------------------------------------------------
-  add({ name: 'helmet', topShade: 0, bone: B.head, min: [-5, 46, -6], max: [8, 54, 6], faces: {
-    px: A1([12, 2, 24, 10], 'ABK'), nx: A5([13, 2, 25, 10], 'AK'), ...sides((f) => A3([9, 2, 22, 10], 'ABK', f)),
-  } });
-  add({ name: 'cap', topShade: 0, bone: B.head, min: [-3.5, 54, -4.5], max: [5.5, 56, 4.5], faces: {
-    px: A1([13, 0, 23, 2], 'A'), nx: A5([14, 0, 24, 2], 'A'), ...sides((f) => A3([11, 0, 21, 2], 'A', f)),
-  } });
-  add({ name: 'visor', bone: B.head, min: [7.2, 46.4, -4.7], max: [8.8, 51, 4.7], faces: {
-    px: A1([14, 5, 22, 10], 'B'), nx: 0xcf, ...sides((f) => A3([9, 5, 11, 10], 'B', f)),
-  } });
+  // ---- head: a round tan helmet, a wide dark visor -------------------------
+  add({ name: 'helmet', topShade: 0, bone: B.head, min: [-5.5, 45.5, -6.6], max: [8.5, 54, 6.6], faces: all(paint(TAN)) });
+  add({ name: 'cap', topShade: 0, bone: B.head, min: [-4, 54, -5], max: [6, 56, 5], faces: all(paint(TAN)) });
+  add({ name: 'visor', bone: B.head, min: [7.6, 47.4, -5.4], max: [9.4, 51.4, 5.4], faces: all(paint(VISOR)) });
 
-  // ---- shoulder pads (+ the antenna on the right one) ---------------------
-  const padR = add({ name: 'padR', topShade: 0, bone: B.padR, min: [-7.5, 42.5, 8], max: [3, 47, 16.5], faces: {
-    px: A1([0, 8, 12, 13], 'AK'), nx: A5([26, 8, 38, 13], 'AK'), ...sides((f) => A3([13, 8, 27, 13], 'AK', f)),
-  } });
-  add(mirrorZ(padR, 'padL', B.padL, {
-    px: A1([24, 8, 36, 13], 'AK'), nx: A5([0, 8, 12, 13], 'AK'), ...sides((f) => A3([13, 8, 27, 13], 'AK', f)),
-  }));
-  const capR = add({ name: 'padCapR', topShade: 0, bone: B.padR, min: [-5.5, 47, 9], max: [1, 48.5, 14.5], faces: {
-    px: A1([3, 6, 11, 8], 'A'), nx: A5([27, 6, 35, 8], 'A'), ...sides((f) => A3([14, 6, 26, 8], 'A', f)),
-  } });
-  add(mirrorZ(capR, 'padCapL', B.padL, {
-    px: A1([25, 6, 33, 8], 'A'), nx: A5([3, 6, 11, 8], 'A'), ...sides((f) => A3([14, 6, 26, 8], 'A', f)),
-  }));
-  add({ name: 'antenna', topShade: 0, bone: B.padR, min: [-5.5, 48.5, 10], max: [-4.5, 53, 11], faces: all(A1([9, 1, 10, 6])) });
+  // ---- shoulders: the suit's rounded sleeves ---------------------------------
+  const padR = add({ name: 'padR', topShade: 0, bone: B.padR, min: [-4, 42, 8.5], max: [3, 46.5, 15.5], faces: all(suit) });
+  add(mirrorZ(padR, 'padL', B.padL, all(suit)));
 
-  // ---- arms: bare upper arms, gray gauntlets, bare hands ------------------
-  const uArmR = add({ name: 'uArmR', bone: B.uArmR, min: [-4, 34, 10], max: [3, 42.5, 17], faces: {
-    px: A1([1, 13, 9, 22], 'S'), nx: A5([29, 13, 37, 22], 'S'), ...sides((f) => A3([14, 15, 22, 22], 'S', f)),
-  } });
-  add(mirrorZ(uArmR, 'uArmL', B.uArmL, {
-    px: A1([27, 13, 35, 22], 'S'), nx: A5([1, 13, 9, 22], 'S'), ...sides((f) => A3([14, 15, 22, 22], 'S', f)),
-  }));
-  const fArmR = add({ name: 'fArmR', bone: B.fArmR, min: [-4, 26, 10], max: [3, 35, 17], faces: {
-    px: A1([3, 20, 9, 28], 'A'), nx: A1([3, 20, 9, 28], 'A', true), ...sides((f) => A3([3, 21, 13, 27], 'A', f)),
-  } });
-  add(mirrorZ(fArmR, 'fArmL', B.fArmL, {
-    px: A1([3, 20, 9, 28], 'A', true), nx: A1([3, 20, 9, 28], 'A'), ...sides((f) => A3([3, 21, 13, 27], 'A', f)),
-  }));
-  const handR = add({ name: 'handR', bone: B.fArmR, min: [-2.5, 22, 11.5], max: [1.5, 26, 15.5], faces: {
-    ...all(A1([12, 23, 17, 27], 'S')), py: 'derive', ny: 'derive',
-  } });
-  add(mirrorZ(handR, 'handL', B.fArmL, { ...all(A1([12, 23, 17, 27], 'S', true)), py: 'derive', ny: 'derive' }));
+  // ---- arms: bare, dark gloves --------------------------------------------
+  const uArmR = add({ name: 'uArmR', bone: B.uArmR, min: [-4, 34, 10], max: [3, 42.5, 17], faces: all(paint(SKIN)) });
+  add(mirrorZ(uArmR, 'uArmL', B.uArmL, all(paint(SKIN))));
+  const fArmR = add({ name: 'fArmR', bone: B.fArmR, min: [-4, 26, 10], max: [3, 35, 17], faces: all(paint(SKIN)) });
+  add(mirrorZ(fArmR, 'fArmL', B.fArmL, all(paint(SKIN))));
+  const handR = add({ name: 'handR', bone: B.fArmR, min: [-2.5, 22, 11.5], max: [1.5, 26, 15.5], faces: all(paint(GLOVE)) });
+  add(mirrorZ(handR, 'handL', B.fArmL, all(paint(GLOVE))));
 
-  // ---- legs: green tops, gray armour, boots --------------------------------
-  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 0.6], max: [5, 28, 10.6], faces: {
-    px: A1([18, 33, 27, 44], 'GAK', true), nx: A5([19, 33, 28, 44], 'GAK'), ...sides((f) => A3([8, 33, 20, 44], 'GA', f)),
-  } });
-  add(mirrorZ(thighR, 'thighL', B.thighL, {
-    px: A1([18, 33, 27, 44], 'GAK'), nx: A5([10, 33, 19, 44], 'GAK'), ...sides((f) => A3([8, 33, 20, 44], 'GA', f)),
-  }));
-  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 0.4], max: [5, 15.2, 11], faces: {
-    px: A1([18, 44, 27, 56], 'AK', true), nx: A5([19, 44, 28, 56], 'AK'), ...sides((f) => A3([16, 43, 28, 54], 'AK', f)),
-  } });
-  add(mirrorZ(shinR, 'shinL', B.shinL, {
-    px: A1([18, 44, 27, 56], 'AK'), nx: A5([10, 44, 19, 56], 'AK'), ...sides((f) => A3([16, 43, 28, 54], 'AK', f)),
-  }));
-  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 0.9], max: [9, 4.5, 10.5], faces: {
-    px: A1([18, 52, 27, 56], 'AK', true), ...sides((f) => A3([13, 51, 17, 55], 'A', f)),
-  } });
-  add(mirrorZ(toeR, 'toeL', B.shinL, { px: A1([18, 52, 27, 56], 'AK'), ...sides((f) => A3([13, 51, 17, 55], 'A', f)) }));
+  // ---- legs: green thighs, khaki armoured boots up to the knee ---------------
+  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 0.6], max: [5, 28, 10.6], faces: all(suit) });
+  add(mirrorZ(thighR, 'thighL', B.thighL, all(suit)));
+  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 0.4], max: [5, 15.2, 11], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
+  add(mirrorZ(shinR, 'shinL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
+  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 0.9], max: [9, 4.5, 10.5], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
+  add(mirrorZ(toeR, 'toeL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
 
-  // ---- the rifle (gun-local bind: barrel along +X) -------------------------
-  const gunSide = (f: boolean) => S('PLAYE3E7', [0, 16, 12, 19], 'AK', f);
-  add({ name: 'gunBody', bone: B.gun, min: [-6, -1.6, -1.1], max: [9, 1.6, 1.1], faces: {
-    px: A1([17, 23, 21, 26], 'K'), nx: A1([17, 23, 21, 26], 'AK'), ...sides(gunSide),
-  } });
-  add({ name: 'gunBarrel', bone: B.gun, min: [9, -0.3, -0.75], max: [19, 1.2, 0.75], faces: all(A1([29, 24, 36, 26], 'K')) });
-  add({ name: 'gunMag', bone: B.gun, min: [1.5, -4.6, -0.8], max: [4, -1.6, 0.8], faces: all(A1([17, 23, 22, 25], 'K')) });
+  // ---- the gun (gun-local bind: barrel along +X): dark steel, a wood stock and pump ----
+  add({ name: 'gunBody', bone: B.gun, min: [-6, -1.6, -1.1], max: [9, 1.6, 1.1], faces: { ...all(paint(GUN)), nx: paint(WOOD) } });
+  add({ name: 'gunBarrel', bone: B.gun, min: [9, -0.3, -0.75], max: [19, 1.2, 0.75], faces: all(paint(GUN)) });
+  add({ name: 'gunMag', bone: B.gun, min: [1.5, -4.6, -0.8], max: [4, -1.6, 0.8], faces: all(paint(WOOD)) });
 
   // ---- effects: muzzle flash, blood pool, blood bits (hidden at rest) -------
   add({ name: 'flash', bone: B.flash, min: [-2.5, -2.5, -2.5], max: [2.5, 2.5, 2.5], bright: true,
@@ -232,6 +194,7 @@ export function buildRig(src: SpriteSource, pal: PaletteData): BuiltRig {
       if (spec === 'derive' && key !== 'py' && key !== 'ny') spec = 0x6c;
       let img: IndexImage | null = null;
       if (typeof spec === 'number') img = { w: W, h: H, px: new Uint8Array(W * H).fill(spec) };
+      else if (spec !== 'derive' && 'paint' in spec) img = paintRect(pal, spec, W, H, bi * 8 + FACE_KEYS.indexOf(key));
       else if (spec !== 'derive') {
         img = spec.scatter
           ? scatterRect(src, spec, W, H, bi * 8 + FACE_KEYS.indexOf(key))

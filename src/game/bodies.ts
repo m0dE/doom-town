@@ -6,7 +6,8 @@
  * arrives here):
  *   - position/angle: the interpolated RenderMobj (Doom map units, Z-up). The model
  *     is Y-up facing +X, so each sits in a holder turned +90° about X, and the
- *     Doom angle is its own rotation about its up axis;
+ *     Doom angle is its own rotation about its up axis; a dead body keeps the angle
+ *     it died with (the sim keeps turning a dead player's mobj with his view);
  *   - frame: the sim's PLAY frame letter (A..W, FF_FULLBRIGHT stripped) is the pose;
  *     tics are not exported, so each frame is timed from its start;
  *   - walk speed: position delta per tic of the drawn (confirmed-ring) position,
@@ -84,6 +85,8 @@ interface Body {
   /** smoothed horizontal velocity, map units per tic */
   vx: number;
   vy: number;
+  /** facing locked when he died (radians), null while alive */
+  deadAngle: number | null;
   seen: number;
 }
 
@@ -145,7 +148,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       const color = m.slot >= 0 ? m.translation : (this.colorOf.get(m.id) ?? m.translation);
       if (!b) {
         b = this.take(m.id, color);
-        b.x = m.x; b.y = m.y; b.tic = ctx.tic; b.speed = 0; b.vx = 0; b.vy = 0;
+        b.x = m.x; b.y = m.y; b.tic = ctx.tic; b.speed = 0; b.vx = 0; b.vy = 0; b.deadAngle = null;
         ctx.scene.add(b.holder);
       }
       b.seen = stamp;
@@ -164,7 +167,13 @@ export class ModelBodies implements PlayerBodyRenderer {
 
       const h = b.holder;
       h.position.set(m.x, m.y, m.z);
-      b.model.object.rotation.y = m.angle;
+      // dead is dead: the sim still turns a dead player toward his killer (and a human's
+      // mouse turns him), but the body keeps the facing it died with
+      const dead = (m.frame & FF_FRAMEMASK) >= 7;
+      if (!dead) b.deadAngle = null;
+      else if (b.deadAngle === null) b.deadAngle = m.angle;
+      const angle = b.deadAngle ?? m.angle;
+      b.model.object.rotation.y = angle;
       // off camera or far away: placed but not posed
       this.sphere.center.set(m.x, m.y, m.z + 28);
       this.sphere.radius = 48;
@@ -188,8 +197,8 @@ export class ModelBodies implements PlayerBodyRenderer {
       const pending = this.kicks.get(m.id);
       let kick: RagdollKick | null = null;
       if (pending && frame >= 7 && frame <= 13) {
-        // into model space: the body faces m.angle, Doom (x, y) → model (x, -z)
-        const c = Math.cos(m.angle), s = Math.sin(m.angle), k = pending.kick;
+        // into model space: the body faces `angle`, Doom (x, y) → model (x, -z)
+        const c = Math.cos(angle), s = Math.sin(angle), k = pending.kick;
         kick = { ...k, dx: k.dx * c + k.dz * s, dz: -(-k.dx * s + k.dz * c) };
         this.kicks.delete(m.id);
       }
@@ -258,7 +267,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       reuse.model.reset?.(id);
       reuse.model.setColor(color);
       reuse.color = color;
-      reuse.speed = 0; reuse.vx = 0; reuse.vy = 0;
+      reuse.speed = 0; reuse.vx = 0; reuse.vy = 0; reuse.deadAngle = null;
       this.live.set(id, reuse);
       return reuse;
     }
@@ -270,7 +279,7 @@ export class ModelBodies implements PlayerBodyRenderer {
     holder.rotation.x = Math.PI / 2; // Y-up model in the Z-up world
     holder.add(model.object);
     holder.matrixAutoUpdate = true;
-    const b: Body = { id, model, holder, color, x: 0, y: 0, tic: 0, speed: 0, vx: 0, vy: 0, seen: 0 };
+    const b: Body = { id, model, holder, color, x: 0, y: 0, tic: 0, speed: 0, vx: 0, vy: 0, deadAngle: null, seen: 0 };
     this.live.set(id, b);
     return b;
   }

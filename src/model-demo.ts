@@ -7,7 +7,7 @@
  *   ?mode=anims     one cell per animation, mid-pose (&angle=degrees)
  *   ?mode=perf      100 animated instances, frame time in the corner
  *   ?mode=ragdoll   ragdoll deaths (rocket, plasma, BFG, shotgun, chaingun), looping
- *                   (&t=seconds after the hit: a still, simulated up to then)
+ *                   (&t=seconds after the hit: a still, simulated up to then; &near: close up)
  *   &t=seconds      freeze time (screenshots); &color=n player colour
  */
 import * as THREE from 'three';
@@ -558,8 +558,8 @@ function ragdoll(factory: DoomguyFactory, info: string): void {
       });
     }
     cam.aspect = w / h;
-    cam.position.set(-330, 170, 380);
-    cam.lookAt(20, 20, 0);
+    if (params.has('near')) { cam.position.set(-60, 110, 150); cam.lookAt(10, 0, 0); } // the middle body, close
+    else { cam.position.set(-330, 170, 380); cam.lookAt(20, 20, 0); }
     cam.updateProjectionMatrix();
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, w, h);

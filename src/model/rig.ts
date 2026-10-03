@@ -32,24 +32,24 @@ export const NUM_BITS = 8;
 
 /** Joint pivots in bind (model) space. */
 export const PIVOT = {
-  pelvis: new THREE.Vector3(-1, 29.5, 0),
-  waist: new THREE.Vector3(-1, 32, 0),
-  neck: new THREE.Vector3(0.5, 46, 0),
-  shoulderR: new THREE.Vector3(-0.5, 42.5, 13.5),
-  shoulderL: new THREE.Vector3(-0.5, 42.5, -13.5),
-  elbowR: new THREE.Vector3(-0.5, 35, 13.5),
-  elbowL: new THREE.Vector3(-0.5, 35, -13.5),
+  pelvis: new THREE.Vector3(-0.5, 29.5, 0),
+  waist: new THREE.Vector3(-0.5, 33, 0),
+  neck: new THREE.Vector3(0.5, 46.5, 0),
+  shoulderR: new THREE.Vector3(-0.5, 42.5, 10.5),
+  shoulderL: new THREE.Vector3(-0.5, 42.5, -10.5),
+  elbowR: new THREE.Vector3(-0.5, 34.5, 10.5),
+  elbowL: new THREE.Vector3(-0.5, 34.5, -10.5),
   /** centre of the hand: the point the arm IK puts on the gun */
-  handR: new THREE.Vector3(-0.5, 24, 13.5),
-  handL: new THREE.Vector3(-0.5, 24, -13.5),
-  hipR: new THREE.Vector3(-1, 27.5, 5.6),
-  hipL: new THREE.Vector3(-1, 27.5, -5.6),
-  kneeR: new THREE.Vector3(-1, 15, 5.6),
-  kneeL: new THREE.Vector3(-1, 15, -5.6),
+  handR: new THREE.Vector3(-0.5, 24, 10.5),
+  handL: new THREE.Vector3(-0.5, 24, -10.5),
+  hipR: new THREE.Vector3(-0.5, 27.5, 6),
+  hipL: new THREE.Vector3(-0.5, 27.5, -6),
+  kneeR: new THREE.Vector3(-0.5, 16, 6),
+  kneeL: new THREE.Vector3(-0.5, 16, -6),
   /** gun-local (bind at the origin, barrel along +X): where each hand holds it */
   gunGrip: new THREE.Vector3(-1.5, -2.2, 0),
-  gunFore: new THREE.Vector3(10.5, -1.2, 0),
-  gunMuzzle: new THREE.Vector3(19, 0.5, 0),
+  gunFore: new THREE.Vector3(10.5, -1.4, 0),
+  gunMuzzle: new THREE.Vector3(19.5, 0.5, 0),
 };
 export const UPPER_ARM = PIVOT.shoulderR.y - PIVOT.elbowR.y;
 export const FOREARM = PIVOT.elbowR.y - PIVOT.handR.y;
@@ -76,8 +76,8 @@ const mirrorZ = (b: BoxDef, name: string, bone: number, faces: Faces): BoxDef =>
 });
 
 /** the reference sheet's palette (sRGB) */
-const SUIT: RGB = [66, 150, 54], SUIT_DARK: RGB = [44, 106, 40], TAN: RGB = [170, 158, 122], VISOR: RGB = [38, 38, 44];
-const SKIN: RGB = [228, 158, 110], GLOVE: RGB = [50, 50, 55], BOOT: RGB = [152, 142, 110], SOLE: RGB = [96, 90, 72];
+const SUIT: RGB = [66, 150, 54], TAN: RGB = [170, 158, 122], VISOR: RGB = [38, 38, 44];
+const SKIN: RGB = [228, 158, 110], SKIN_DARK: RGB = [176, 112, 72], GLOVE: RGB = [50, 50, 55], BOOT: RGB = [152, 142, 110], SOLE: RGB = [96, 90, 72];
 const BELT: RGB = [66, 60, 48], POUCH: RGB = [132, 122, 96], GUN: RGB = [50, 50, 56], WOOD: RGB = [116, 72, 40];
 type RGB = readonly [number, number, number];
 const paint = (c: RGB, green = false): PaintSpec => ({ paint: c, green });
@@ -90,42 +90,47 @@ export function defineBoxes(): BoxDef[] {
   // with a dark visor, green suit (the green ramp, so player colours still apply),
   // bare arms, dark gloves, khaki boots, a dark gun with wood. Shapes are the Blender
   // meshes (meshes.json); every face is flat colour in blocky shade noise.
-  const suit = paint(SUIT, true), suitDark = paint(SUIT_DARK, true);
+  const suit = paint(SUIT, true);
 
   // ---- trunk -------------------------------------------------------------
-  add({ name: 'pelvis', bone: B.pelvis, min: [-8, 26.5, -9.5], max: [5, 31, 9.5], faces: all(suit) });
-  add({ name: 'belt', bone: B.pelvis, min: [-8.6, 31, -9.4], max: [6.4, 34, 9.4], faces: { ...all(paint(BELT)), px: paint(POUCH), nx: paint(POUCH) } });
-  add({ name: 'torso', bone: B.torso, min: [-8, 34, -9], max: [6, 46, 9], faces: { ...all(suit), py: suitDark } });
+  add({ name: 'pelvis', bone: B.pelvis, min: [-6.5, 26.5, -8.6], max: [5, 30, 8.6], faces: all(suit) });
+  add({ name: 'belt', bone: B.pelvis, min: [-7, 29.6, -8.8], max: [6, 33.2, 8.8], faces: all(paint(BELT)) });
+  add({ name: 'pouchF', bone: B.pelvis, min: [5.4, 29.8, -6.6], max: [7.4, 33, 6.6], faces: all(paint(POUCH)) });
+  add({ name: 'pouchB', bone: B.pelvis, min: [-9, 29.4, -4.2], max: [-6.6, 33.4, 4.2], faces: all(paint(POUCH)) });
+  add({ name: 'torso', bone: B.torso, min: [-6, 33, -8.4], max: [6.6, 46.8, 8.4], faces: all(suit) });
 
-  // ---- head: a round tan helmet, a wide dark visor -------------------------
-  add({ name: 'helmet', topShade: 0, bone: B.head, min: [-5.5, 45.5, -6.6], max: [8.5, 54, 6.6], faces: all(paint(TAN)) });
-  add({ name: 'cap', topShade: 0, bone: B.head, min: [-4, 54, -5], max: [6, 56, 5], faces: all(paint(TAN)) });
-  add({ name: 'visor', bone: B.head, min: [7.6, 47.4, -5.4], max: [9.4, 51.4, 5.4], faces: all(paint(VISOR)) });
+  // ---- head: a faceted tan helmet, a wide dark visor -------------------------
+  add({ name: 'helmet', bone: B.head, min: [-5, 45.6, -6.2], max: [6.6, 56, 6.2], faces: all(paint(TAN)) });
+  add({ name: 'visor', bone: B.head, min: [5.6, 48.8, -4.5], max: [7.5, 52.8, 4.5], faces: all(paint(VISOR)) });
+  add({ name: 'mouth', bone: B.head, min: [5.2, 47.2, -2.3], max: [6.8, 48.9, 2.3], faces: all(paint(SKIN_DARK)) });
 
-  // ---- shoulders: the suit's rounded sleeves ---------------------------------
-  const padR = add({ name: 'padR', topShade: 0, bone: B.padR, min: [-4, 42, 8.5], max: [3, 46.5, 15.5], faces: all(suit) });
+  // ---- shoulders: rounded green sleeves over the deltoids -------------------------
+  const padR = add({ name: 'padR', bone: B.padR, min: [-4.2, 38.5, 6.8], max: [4.2, 47, 14.4], faces: all(suit) });
   add(mirrorZ(padR, 'padL', B.padL, all(suit)));
 
-  // ---- arms: bare, dark gloves --------------------------------------------
-  const uArmR = add({ name: 'uArmR', bone: B.uArmR, min: [-4, 34, 10], max: [3, 42.5, 17], faces: all(paint(SKIN)) });
+  // ---- arms: thick and bare, dark gloves ------------------------------------------
+  const uArmR = add({ name: 'uArmR', bone: B.uArmR, min: [-3, 33.5, 7.8], max: [2.8, 41.5, 13.4], faces: all(paint(SKIN)) });
   add(mirrorZ(uArmR, 'uArmL', B.uArmL, all(paint(SKIN))));
-  const fArmR = add({ name: 'fArmR', bone: B.fArmR, min: [-4, 26, 10], max: [3, 35, 17], faces: all(paint(SKIN)) });
+  const fArmR = add({ name: 'fArmR', bone: B.fArmR, min: [-2.8, 26, 8], max: [2.6, 35, 13.2], faces: all(paint(SKIN)) });
   add(mirrorZ(fArmR, 'fArmL', B.fArmL, all(paint(SKIN))));
-  const handR = add({ name: 'handR', bone: B.fArmR, min: [-2.5, 22, 11.5], max: [1.5, 26, 15.5], faces: all(paint(GLOVE)) });
+  const handR = add({ name: 'handR', bone: B.fArmR, min: [-3, 21.4, 8], max: [2.6, 26.6, 13], faces: all(paint(GLOVE)) });
   add(mirrorZ(handR, 'handL', B.fArmL, all(paint(GLOVE))));
 
-  // ---- legs: green thighs, khaki armoured boots up to the knee ---------------
-  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 0.6], max: [5, 28, 10.6], faces: all(suit) });
+  // ---- legs: thick green thighs, chunky khaki boots up to the knee ------------------
+  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-5.4, 16, 1], max: [5, 29, 11], faces: all(suit) });
   add(mirrorZ(thighR, 'thighL', B.thighL, all(suit)));
-  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 0.4], max: [5, 15.2, 11], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
-  add(mirrorZ(shinR, 'shinL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
-  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 0.9], max: [9, 4.5, 10.5], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
-  add(mirrorZ(toeR, 'toeL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
+  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-5.6, 1, 1.6], max: [5.2, 19, 10.6], faces: all(paint(BOOT)) });
+  add(mirrorZ(shinR, 'shinL', B.shinL, all(paint(BOOT))));
+  const toeR = add({ name: 'toeR', bone: B.shinR, min: [4, 1, 2.2], max: [8.8, 5, 10.2], faces: all(paint(BOOT)) });
+  add(mirrorZ(toeR, 'toeL', B.shinL, all(paint(BOOT))));
+  const soleR = add({ name: 'soleR', bone: B.shinR, min: [-6, 0, 1.5], max: [9.2, 1.4, 10.9], faces: all(paint(SOLE)) });
+  add(mirrorZ(soleR, 'soleL', B.shinL, all(paint(SOLE))));
 
-  // ---- the gun (gun-local bind: barrel along +X): dark steel, a wood stock and pump ----
-  add({ name: 'gunBody', bone: B.gun, min: [-6, -1.6, -1.1], max: [9, 1.6, 1.1], faces: { ...all(paint(GUN)), nx: paint(WOOD) } });
-  add({ name: 'gunBarrel', bone: B.gun, min: [9, -0.3, -0.75], max: [19, 1.2, 0.75], faces: all(paint(GUN)) });
-  add({ name: 'gunMag', bone: B.gun, min: [1.5, -4.6, -0.8], max: [4, -1.6, 0.8], faces: all(paint(WOOD)) });
+  // ---- the shotgun (gun-local bind: barrel along +X): wood stock and pump, dark steel ----
+  add({ name: 'gunStock', bone: B.gun, min: [-10, -3.6, -1.1], max: [-1.4, 1.2, 1.1], faces: all(paint(WOOD)) });
+  add({ name: 'gunBody', bone: B.gun, min: [-1.6, -3.4, -1.2], max: [6.4, 1.8, 1.2], faces: all(paint(GUN)) });
+  add({ name: 'gunBarrel', bone: B.gun, min: [6, -1.1, -0.8], max: [19.5, 1.3, 0.8], faces: all(paint(GUN)) });
+  add({ name: 'gunPump', bone: B.gun, min: [8, -2.5, -1.15], max: [13.6, -0.3, 1.15], faces: all(paint(WOOD)) });
 
   // ---- effects: muzzle flash, blood pool, blood bits (hidden at rest) -------
   add({ name: 'flash', bone: B.flash, min: [-2.5, -2.5, -2.5], max: [2.5, 2.5, 2.5], bright: true,

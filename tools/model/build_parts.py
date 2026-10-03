@@ -1,19 +1,20 @@
 # Doom Town — the marine's part meshes, modelled in Blender (bmesh, no viewport needed).
 #
-# Each part fills the bounds the TS rig gives it (tools/model/parts.json, from
-# src/model/rig.ts), so the sprite-sourced texture of that part still lines up:
-# the client textures every triangle by projecting it onto the face of the part's
-# bounds it points toward (box projection). What this script adds is form: bevels,
-# tapers, a rounded helmet, domed pads, octagonal limbs, knee pads, toe caps,
-# pouches, a round barrel.
+# Low-poly and faceted after the user's reference sheet (2026-10-03): a round
+# faceted helmet with a wide visor wrapped around its front, a V-shaped chest with
+# raised plates, domed shoulder sleeves, thick 8-sided limbs, boots with a flared
+# knee cuff and a wide sole, a pump shotgun. Each part sits in the bounds the TS
+# rig gives it (tools/model/parts.json, from src/model/rig.ts; one flat colour per
+# part, so the projection the client textures with does not matter).
 #
 # Run inside Blender (headless works):  blender -b -P tools/model/build_parts.py
+# or with the bpy module:                python -c "import bpy; exec(open('tools/model/build_parts.py').read())"
 # or through the Blender MCP with exec(open(path).read()).
 # Writes src/model/meshes.json: { part: { p: [x,y,z,...], i: [a,b,c,...] } }.
 import bmesh, json, math, os
 from mathutils import Vector, Matrix
 
-HERE = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else '/app/data/home/worktrees/ticket-b6152e3e/games/doom/tools/model'
+HERE = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.join(os.getcwd(), 'tools', 'model')
 PARTS = json.load(open(os.path.join(HERE, 'parts.json')))
 OUT = os.path.join(HERE, '..', '..', 'src', 'model', 'meshes.json')
 
@@ -85,120 +86,160 @@ def lerp_y_taper(verts, y0, y1, k0, k1, cx, cz):
         v.co.z = cz + (v.co.z - cz) * k
 
 
+
+def loft(bm, mn, mx, axis=1, sides=8, profile=((0, 1), (1, 1)), shift=None):
+    """Rings of an n-gon along `axis` through [mn, mx]: profile (t 0..1, scale) pairs;
+    `shift(t)` → (da, db) moves a ring across the axis. Flats touch the bounds at scale 1."""
+    o = [i for i in range(3) if i != axis]
+    c = [(a + b) / 2 for a, b in zip(mn, mx)]
+    ra, rb = (mx[o[0]] - mn[o[0]]) / 2, (mx[o[1]] - mn[o[1]]) / 2
+    f = 1 / math.cos(math.pi / sides)
+    rings = []
+    for t, k in profile:
+        da, db = shift(t) if shift else (0.0, 0.0)
+        ring = []
+        for i in range(sides):
+            a = (i + 0.5) / sides * math.tau
+            p = [0.0, 0.0, 0.0]
+            p[axis] = mn[axis] + (mx[axis] - mn[axis]) * t
+            p[o[0]] = c[o[0]] + da + math.cos(a) * ra * f * k
+            p[o[1]] = c[o[1]] + db + math.sin(a) * rb * f * k
+            p[o[0]] = min(max(p[o[0]], c[o[0]] + da - ra * k), c[o[0]] + da + ra * k)
+            p[o[1]] = min(max(p[o[1]], c[o[1]] + db - rb * k), c[o[1]] + db + rb * k)
+            ring.append(bm.verts.new(p))
+        rings.append(ring)
+    for a, b in zip(rings, rings[1:]):
+        for i in range(sides):
+            j = (i + 1) % sides
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    bm.faces.new(list(reversed(rings[0])))
+    bm.faces.new(rings[-1])
+    return [v for r in rings for v in r]
+
+
+def ellipsoid(bm, mn, mx, segs=10, rings=6):
+    """A faceted ellipsoid filling [mn, mx]."""
+    r = bmesh.ops.create_uvsphere(bm, u_segments=segs, v_segments=rings, radius=1.0)
+    c = [(a + b) / 2 for a, b in zip(mn, mx)]
+    h = [(b - a) / 2 for a, b in zip(mn, mx)]
+    for v in r['verts']:
+        # uvsphere is Z-up: its Z is our Y
+        x, y, z = v.co.x, v.co.z, v.co.y
+        v.co = Vector((c[0] + x * h[0], c[1] + y * h[1], c[2] + z * h[2]))
+    return r['verts']
+
+
+def band(bm, c, rx, rz, y0, y1, a0, a1, segs=8, thick=0.8):
+    """A curved strip around a vertical axis at c (x, z): angles a0..a1 (0 = +X), radii rx, rz."""
+    outer, inner = [], []
+    for i in range(segs + 1):
+        a = a0 + (a1 - a0) * i / segs
+        for r, out in ((1.0, outer), (None, inner)):
+            k = 1.0 if r else (1 - thick / max(rx, rz))
+            x, z = c[0] + math.cos(a) * rx * k, c[1] + math.sin(a) * rz * k
+            out.append((bm.verts.new((x, y0, z)), bm.verts.new((x, y1, z))))
+    for i in range(segs):
+        (o0, o1), (p0, p1) = outer[i], outer[i + 1]
+        (i0, i1), (q0, q1) = inner[i], inner[i + 1]
+        bm.faces.new((o0, p0, p1, o1))
+        bm.faces.new((i1, q1, q0, i0))
+        bm.faces.new((o1, p1, q1, i1))
+        bm.faces.new((i0, q0, p0, o0))
+    for (a0_, a1_), (b0, b1) in ((outer[0], inner[0]), (outer[-1], inner[-1])):
+        bm.faces.new((a0_, a1_, b1, b0))
+
+
 def build(part):
     n, mn, mx = part['name'], part['min'], part['max']
     bm = bmesh.new()
     cx, cy, cz = [(a + b) / 2 for a, b in zip(mn, mx)]
     side = 1 if cz > 0 else -1
 
-    if n in ('pelvis',):
-        vs = box(bm, mn, mx)
-        lerp_y_taper(bm.verts, mn[1], mx[1], 0.82, 1.0, cx, cz)        # narrower at the crotch
-        bevel(bm, bm.verts, 1.4, 2)
+    if n == 'pelvis':
+        loft(bm, mn, mx, profile=((0, 0.84), (0.6, 0.97), (1, 1)))
     elif n == 'belt':
-        box(bm, mn, mx)
-        bevel(bm, bm.verts, 0.6, 1)
-        # buckle and pouches stand proud of the belt (still inside its bounds' projection)
-        box(bm, [mx[0] - 0.9, mn[1] + 0.4, -2.2], [mx[0] + 0.5, mx[1] - 0.3, 2.2])
-        for z in (-6.0, 6.0):
-            pv = box(bm, [mx[0] - 2.5, mn[1] - 1.2, z - 2.0], [mx[0] + 0.4, mx[1] - 0.2, z + 2.0])
-            bevel(bm, pv, 0.4, 1)
-        for z in (-8.6, 8.6):
-            pv = box(bm, [-5.5, mn[1] - 1.5, z - 1.0 if z < 0 else z - 0.8], [0.5, mx[1] - 0.2, z + 0.8 if z < 0 else z + 1.0])
-            bevel(bm, pv, 0.4, 1)
+        loft(bm, mn, mx, sides=10)
+    elif n == 'pouchF':
+        for z0, z1 in ((mn[2], -1.6), (1.6, mx[2])):
+            pv = box(bm, [mn[0], mn[1] + 0.2, z0], [mx[0], mx[1], z1])
+            bevel(bm, pv, 0.35, 1)
+        pv = box(bm, [mn[0] - 0.2, mn[1] + 0.7, -1.3], [mx[0] - 0.6, mx[1] - 0.5, 1.3])   # buckle
+        bevel(bm, pv, 0.2, 1)
+    elif n == 'pouchB':
+        pv = box(bm, mn, mx)
+        bevel(bm, pv, 0.5, 1)
     elif n == 'torso':
-        box(bm, mn, mx)
-        lerp_y_taper(bm.verts, mn[1], mx[1], 0.84, 1.0, cx, cz)        # V-shaped chest
-        bevel(bm, bm.verts, 2.2, 2)
-        # chest plates: two raised slabs on the front
-        for z in (-4.3, 4.3):
-            pv = box(bm, [mx[0] - 1.0, 38.5, z - 3.8], [mx[0] + 0.9, 45.0, z + 3.8])
-            bevel(bm, pv, 0.7, 2)
-        # back pack plate
-        pv = box(bm, [mn[0] - 1.2, 36.5, -6.0], [mn[0] + 0.5, 45.0, 6.0])
-        bevel(bm, pv, 0.6, 1)
+        # V chest: narrow at the waist, broad and squared at the shoulders
+        loft(bm, mn, mx, profile=((0, 0.8), (0.3, 0.86), (0.75, 0.97), (0.92, 0.97), (1, 0.84)))
+        for z in (-3.7, 3.7):                                           # chest plates
+            pv = box(bm, [mx[0] - 1.6, 37.5, z - 3.4], [mx[0] + 0.1, 45.4, z + 3.4])
+            bevel(bm, pv, 0.5, 1)
+        pv = box(bm, [mn[0] - 0.3, 36.0, -5.6], [mn[0] + 1.6, 45.6, 5.6])   # back plate
+        bevel(bm, pv, 0.5, 1)
     elif n == 'helmet':
-        box(bm, mn, [mx[0], mx[1] + 1.5, mx[2]])
-        bevel(bm, bm.verts, 3.6, 3)                                      # rounded shell
-        for v in bm.verts:                                               # flatten the cheeks slightly
-            if v.co.y < mn[1] + 2.0:
-                v.co.x = cx + (v.co.x - cx) * 0.92
-        # jaw guard
-        pv = box(bm, [mx[0] - 3.5, mn[1] - 0.2, -3.6], [mx[0] - 0.2, mn[1] + 2.4, 3.6])
-        bevel(bm, pv, 0.6, 1)
-    elif n == 'cap':
-        box(bm, mn, [mx[0], mx[1] - 0.5, mx[2]])
-        bevel(bm, bm.verts, 1.6, 2)
-    elif n == 'visor':
-        # wraps around the front of the helmet: a bent strip
-        prism(bm, [mn[0] - 3.0, mn[1], mn[2]], mx, sides=10, axis=1)
+        # round and faceted; the brim comes low at the back and sides, the face is open below the visor
+        ellipsoid(bm, [mn[0], mn[1] - 1.0, mn[2]], [mx[0] - 0.6, mx[1], mx[2]], segs=10, rings=7)
         for v in bm.verts:
-            v.co.x = max(v.co.x, mn[0])                                  # cut the back off
-        bevel(bm, bm.verts, 0.5, 1, only=lambda e: abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-3)
+            v.co.y = max(v.co.y, mn[1])
+        pv = box(bm, [mx[0] - 3.4, mn[1], -3.2], [mx[0] - 0.2, mn[1] + 1.8, 3.2])  # chin guard
+        bevel(bm, pv, 0.5, 1)
+    elif n == 'visor':
+        # wraps the helmet's front (helmet: centre x 0.5, half-width 5.5 deep, 6.2 wide)
+        band(bm, (0.5, 0.0), 5.95, 6.45, mn[1], mx[1], -0.95, 0.95, segs=8, thick=0.9)
+    elif n == 'mouth':
+        band(bm, (0.5, 0.0), 5.6, 6.0, mn[1], mx[1], -0.4, 0.4, segs=4, thick=1.2)
     elif n in ('padR', 'padL'):
-        # a deep pauldron: taller than its bounds (the texture projection clamps),
-        # domed on top, rolled at the rim
-        box(bm, [mn[0] - 0.5, mn[1] - 2.0, mn[2] if side > 0 else mn[2] - 0.8], [mx[0] + 0.5, mx[1] + 1.2, mx[2] + 0.8 if side > 0 else mx[2]])
-        bevel(bm, bm.verts, 3.2, 3, only=lambda e: min(e.verts[0].co.y, e.verts[1].co.y) > mn[1] - 1.5)
-        bevel(bm, [v for v in bm.verts if v.co.y < mn[1] - 1.4], 1.0, 1)
-    elif n in ('padCapR', 'padCapL'):
-        box(bm, mn, mx)
-        bevel(bm, bm.verts, 1.4, 2)
-    elif n == 'antenna':
-        prism(bm, mn, mx, sides=6, axis=1, taper=0.6)
-        box(bm, [mn[0] - 0.4, mx[1] - 1.0, mn[2] - 0.4], [mx[0] + 0.4, mx[1], mx[2] + 0.4])
+        # a domed sleeve over the deltoid: the lower half pulled in
+        ellipsoid(bm, mn, mx, segs=8, rings=6)
+        for v in bm.verts:
+            if v.co.y < cy:
+                k = 1 - 0.35 * (cy - v.co.y) / (cy - mn[1])
+                v.co.x = cx + (v.co.x - cx) * k
+                v.co.z = cz + (v.co.z - cz) * k
     elif n in ('uArmR', 'uArmL'):
-        prism(bm, mn, mx, sides=8, axis=1, taper=1.0, flare=0.82)        # bicep thicker at the top
-        bevel(bm, bm.verts, 0.5, 1, only=lambda e: abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-3)
+        loft(bm, mn, mx, profile=((0, 0.84), (0.55, 1), (1, 0.9)))      # bicep
     elif n in ('fArmR', 'fArmL'):
-        prism(bm, mn, mx, sides=8, axis=1, taper=0.8, flare=0.92)        # gauntlet, a little wider at the wrist
-        bevel(bm, bm.verts, 0.6, 1, only=lambda e: abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-3)
-        # cuff ring at the wrist
-        pv = prism(bm, [mn[0] + 0.3, mn[1], mn[2] + 0.3], [mx[0] - 0.3, mn[1] + 1.2, mx[2] - 0.3], sides=8, axis=1)
+        loft(bm, mn, mx, profile=((0, 0.8), (0.65, 1), (1, 0.92)))      # thick forearm, narrower wrist
     elif n in ('handR', 'handL'):
-        box(bm, mn, mx)
-        bevel(bm, bm.verts, 1.0, 2)
-        # thumb
-        pv = box(bm, [mx[0] - 1.5, mx[1] - 2.2, cz - 0.9 * side - 0.8], [mx[0] + 0.6, mx[1] - 0.4, cz - 0.9 * side + 0.8])
+        pv = box(bm, mn, [mx[0], mx[1] - 0.6, mx[2]])
+        bevel(bm, pv, 0.9, 1)
+        pv = box(bm, [mx[0] - 1.6, mn[1] + 0.3, cz - 2.2], [mx[0] + 0.5, mn[1] + 3.0, cz + 2.2])   # knuckles
+        bevel(bm, pv, 0.4, 1)
+        pv = box(bm, [mn[0] + 0.6, mx[1] - 1.6, mn[2] - 0.2], [mx[0] - 0.6, mx[1], mx[2] + 0.2])  # cuff
         bevel(bm, pv, 0.3, 1)
     elif n in ('thighR', 'thighL'):
-        prism(bm, mn, mx, sides=8, axis=1, taper=1.0, flare=0.84)
-        bevel(bm, bm.verts, 0.8, 1, only=lambda e: abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-3)
-        # knee pad
-        pv = box(bm, [mx[0] - 1.6, mn[1] - 1.0, cz - 3.4], [mx[0] + 1.0, mn[1] + 5.0, cz + 3.4])
-        bevel(bm, pv, 1.2, 2)
+        loft(bm, mn, mx, profile=((0, 0.8), (0.45, 0.96), (1, 1)))
     elif n in ('shinR', 'shinL'):
-        vs = box(bm, mn, mx)
-        lerp_y_taper(bm.verts, 3.5, mx[1], 1.0, 0.86, cx, cz)          # calf narrows above the boot
-        bevel(bm, bm.verts, 1.3, 2)
-        # boot cuff
-        pv = box(bm, [mn[0] - 0.4, 3.4, mn[2] - 0.4], [mx[0] + 0.4, 5.0, mx[2] + 0.4])
+        # a boot: wide over the foot, narrower at the shin, a flared cuff over the knee
+        loft(bm, mn, mx, profile=((0, 0.94), (0.2, 0.86), (0.55, 0.8), (0.74, 0.86), (0.77, 1.0), (1, 0.97)),
+             shift=lambda t: (-0.6 * (1 - t), 0.0))
+        pv = box(bm, [mx[0] - 1.2, 13.5, cz - 2.8], [mx[0] + 0.6, 18.4, cz + 2.8])   # knee plate
         bevel(bm, pv, 0.5, 1)
-        # sole
-        box(bm, [mn[0] - 0.3, 0.0, mn[2] - 0.2], [mx[0] + 0.2, 0.9, mx[2] + 0.2])
     elif n in ('toeR', 'toeL'):
-        box(bm, [mn[0] - 1.0, mn[1], mn[2]], mx)
-        bevel(bm, bm.verts, 1.4, 2, only=lambda e: max(e.verts[0].co.y, e.verts[1].co.y) > 0.5)
-        box(bm, [mn[0] - 1.0, 0.0, mn[2] - 0.2], [mx[0] + 0.3, 0.9, mx[2] + 0.2])
-    elif n == 'gunBody':
-        box(bm, [mn[0] + 2.0, mn[1], mn[2]], mx)                        # receiver
-        bevel(bm, bm.verts, 0.4, 1)
-        pv = box(bm, [mn[0], mn[1] - 0.6, -0.9], [mn[0] + 3.0, mn[1] + 1.8, 0.9])   # stock
-        bevel(bm, pv, 0.4, 1)
-        pv = box(bm, [0.2, mn[1] - 3.0, -0.7], [1.6, mn[1] + 0.2, 0.7])  # pistol grip
+        pv = box(bm, mn, mx)
+        bevel(bm, pv, 1.4, 1, only=lambda e: max(e.verts[0].co.y, e.verts[1].co.y) > mn[1] + 1.0)
+    elif n in ('soleR', 'soleL'):
+        pv = box(bm, mn, mx)
         bevel(bm, pv, 0.3, 1)
-        pv = box(bm, [1.0, mx[1] - 0.1, -0.5], [5.0, mx[1] + 0.9, 0.5])  # sight rail
+    elif n == 'gunStock':
+        pv = box(bm, [mn[0], mn[1] + 1.2, mn[2]], mx)
+        for v in pv:                                                     # the butt drops below the line
+            if v.co.x < -5.0:
+                v.co.y -= (-5.0 - v.co.x) * 0.3
+        bevel(bm, pv, 0.3, 1)
+    elif n == 'gunBody':
+        pv = box(bm, [mn[0], -1.2, mn[2]], mx)                         # receiver
+        bevel(bm, pv, 0.25, 1)
+        pv = box(bm, [-0.6, mn[1], -0.55], [1.4, -1.2, 0.55])           # trigger guard
         bevel(bm, pv, 0.2, 1)
     elif n == 'gunBarrel':
-        prism(bm, [mn[0], mn[1], mn[2]], mx, sides=8, axis=0)
-        pv = prism(bm, [mn[0], mn[1] - 0.6, mn[2] - 0.3], [mn[0] + 4.0, mx[1] + 0.2, mx[2] + 0.3], sides=8, axis=0)  # handguard
-        pv = prism(bm, [mx[0] - 1.4, mn[1] - 0.25, mn[2] - 0.25], [mx[0], mx[1] + 0.25, mx[2] + 0.25], sides=8, axis=0)  # muzzle
-    elif n == 'gunMag':
-        box(bm, mn, mx)
-        for v in bm.verts:                                               # curved magazine
-            if v.co.y < (mn[1] + mx[1]) / 2:
-                v.co.x += 0.8
-        bevel(bm, bm.verts, 0.3, 1)
+        loft(bm, [mn[0], -0.2, -0.75], [mx[0], 1.3, 0.75], axis=0, sides=8)      # barrel
+        loft(bm, [mn[0], mn[1], -0.65], [mx[0] - 2.0, 0.1, 0.65], axis=0, sides=8)  # magazine tube
+    elif n == 'gunPump':
+        pv = box(bm, mn, mx)
+        bevel(bm, pv, 0.35, 1)
+        for x in (9.4, 11.0, 12.6):                                     # grip ridges
+            pv = box(bm, [x - 0.3, mn[1] - 0.2, mn[2] - 0.15], [x + 0.3, mx[1] - 0.4, mx[2] + 0.15])
     else:
         bm.free()
         return None                                                      # effects keep their boxes

@@ -180,7 +180,8 @@ export function poseFor(inp: PoseInput): Pose {
     p.hy = -0.05 * s * amp;
     p.gy += 0.6 * Math.abs(c) * amp;
   } else {
-    p.thRx = 0.07; p.thLx = -0.07;
+    // feet apart (an A stance; +thRx would turn his right foot in)
+    p.thRx = -0.07; p.thLx = 0.07;
   }
 
   if (f === FRAME.E || f === FRAME.F) {
@@ -192,7 +193,7 @@ export function poseFor(inp: PoseInput): Pose {
     p.hy = 0.1;
     if (amp < 0.2) {
       // E1/E3: a braced stance, feet apart, one forward
-      p.thRx = 0.16; p.thLx = -0.16;
+      p.thRx = -0.2; p.thLx = 0.2;
       p.thLz = 0.5; p.thRz = -0.38;
       p.knL = -0.55; p.knR = -0.3;
       p.py -= 2.4;
@@ -224,7 +225,7 @@ export function poseFor(inp: PoseInput): Pose {
     // jump: knees tucked, feet apart, rifle held up
     p.thRz = 0.55; p.knR = -1.1;
     p.thLz = 0.15; p.knL = -0.6;
-    p.thRx = 0.08; p.thLx = -0.08;
+    p.thRx = -0.12; p.thLx = 0.12;
     p.plant = 0;
     p.py += 2;
     p.gy += 1.5;
@@ -243,21 +244,21 @@ function deathKeys(): Pose[] {
     p.knR = -0.6; p.knL = -0.4; p.thRz = 0.3; p.thLz = 0.2; });
   // J: knees buckle
   k((p) => { p.py = -9; p.px = -2; p.tz = 0.05; p.hz = -0.3; p.hx = 0.2; p.drop = 0.7;
-    p.thRz = 1.0; p.knR = -1.8; p.thLz = 0.8; p.knL = -1.6; p.thRx = 0.15; p.thLx = -0.2;
+    p.thRz = 1.0; p.knR = -1.8; p.thLz = 0.8; p.knL = -1.6; p.thRx = -0.15; p.thLx = 0.2;
     p.freeR = 1; p.hRx = 6; p.hRy = 30; p.hRz = 9; p.freeL = 1; p.hLx = 6; p.hLy = 30; p.hLz = -9; });
   // K: slumped on his knees, falling back
   k((p) => { p.py = -16; p.px = -5; p.rz = 0.45; p.tz = 0.2; p.hz = 0.3; p.hx = 0.25; p.drop = 1;
-    p.thRz = 1.4; p.knR = -2.3; p.thLz = 1.2; p.knL = -2.2; p.thRx = 0.25; p.thLx = -0.3;
+    p.thRz = 1.4; p.knR = -2.3; p.thLz = 1.2; p.knL = -2.2; p.thRx = -0.25; p.thLx = 0.3;
     p.freeR = 1; p.hRx = 2; p.hRy = 27; p.hRz = 16; p.freeL = 1; p.hLx = 2; p.hLy = 27; p.hLz = -16; });
   // L: on his back
   k((p) => { p.py = -21; p.px = -6; p.rz = 1.45; p.tz = 0.08; p.hz = 0.2; p.hx = 0.45; p.drop = 1; p.pool = 0.25;
-    p.thRz = 1.0; p.knR = -1.6; p.thLz = 0.55; p.knL = -1.1; p.thRx = 0.35; p.thLx = -0.4;
+    p.thRz = 1.0; p.knR = -1.6; p.thLz = 0.55; p.knL = -1.1; p.thRx = -0.35; p.thLx = 0.4;
     p.freeR = 1; p.hRx = -4; p.hRy = 40; p.hRz = 19; p.freeL = 1; p.hLx = 2; p.hLy = 36; p.hLz = -20; });
   // M: settling
   // M: settling, knees drawn up (the sprites end as a crumpled heap, not stretched out)
   k((p) => { Object.assign(p, keys[4]); p.py = -21.5; p.rz = 1.52; p.thRz = 1.25; p.knR = -1.9; p.thLz = 0.95; p.knL = -1.6; p.hx = 0.6; p.pool = 0.7; });
   // N: still, in a pool
-  k((p) => { Object.assign(p, keys[5]); p.thRz = 1.15; p.knR = -1.75; p.thRx = 0.5; p.thLx = -0.55; p.pool = 1; });
+  k((p) => { Object.assign(p, keys[5]); p.thRz = 1.15; p.knR = -1.75; p.thRx = -0.5; p.thLx = 0.55; p.pool = 1; });
   return keys;
 }
 const DEATH_KEYS = deathKeys();
@@ -291,8 +292,8 @@ function rotAbout(out: THREE.Matrix4, pivot: THREE.Vector3, x: number, y: number
 
 const CHEST = new THREE.Vector3(0, 40, 2);
 /** boot sole sample points (bind space): heel and toe, each boot */
-const FEET: [number, number][] = [[B.shinR, 5.6], [B.shinL, -5.6]];
-const FOOT_X = [-7.5, 9];
+const FEET: [number, number][] = [[B.shinR, 6], [B.shinL, -6]];
+const FOOT_X = [-6, 9.2];
 // scratch (posing allocates nothing per call on the hot path)
 const A_HAND = new THREE.Vector3(), A_D1 = new THREE.Vector3(), A_D2 = new THREE.Vector3(), A_B1 = new THREE.Vector3();
 const A_S1 = new THREE.Vector3(), A_F2 = new THREE.Vector3(), P_TMP = new THREE.Vector3();

@@ -4,6 +4,7 @@
  *
  *   npm run export                    # typecheck, build, zip into export/
  *   npm run export -- --no-build      # re-zip what is already in export/doom-town
+ *   npm run export -- --unpublished   # allow uncommitted or unpushed work (not for upload)
  *
  * Writes:
  *   export/doom-town/          the site (index.html at its root, relative URLs only)
@@ -13,8 +14,11 @@
  * The site carries what GPL-2.0 §3(a) asks of a web build: LICENSE.txt, the
  * Freedoom data's COPYING and CREDITS, and source.zip - the complete
  * corresponding source of games/doom as it was built (tracked and untracked
- * files, minus what .gitignore excludes and minus export/), linked from the
- * start screen's footer.
+ * files, minus what .gitignore excludes and minus export/), on the same server
+ * as the game so it does not depend on GitHub. The start screen's footer does
+ * not link the zip; its Source code link goes to the built commit on
+ * https://github.com/m0dE/doom-town - which is why export refuses a dirty tree
+ * or a commit that is not pushed.
  *
  * arrr.fun's rules, checked here before an upload rather than after: index.html
  * at the zip root, at most 5000 files and 100 MiB inflated, no absolute asset
@@ -60,6 +64,16 @@ let head = 'dev';
 try { head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
 let dirty = false;
 try { dirty = execFileSync('git', ['status', '--porcelain', '--', '.'], { cwd: ROOT, encoding: 'utf8' }).trim() !== ''; } catch { /* not a checkout */ }
+
+// The footer's Source code link points at this commit on GitHub, so only publish what
+// is committed and pushed there - otherwise that link would not be this build's source.
+if (!flag('unpublished')) {
+  if (head === 'dev') fail('not a git checkout, so the footer cannot link this build\'s source (--unpublished to build anyway)');
+  if (dirty) fail('uncommitted changes would not be in the linked source on GitHub; commit and push first (--unpublished to build anyway)');
+  let pushed = '';
+  try { pushed = execFileSync('git', ['branch', '-r', '--contains', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { /* no remote */ }
+  if (!pushed) fail(`commit ${head} is not on any remote branch; push it first so the footer's source link resolves (--unpublished to build anyway)`);
+}
 
 /** The source files of games/doom as built: tracked + untracked-but-not-ignored, never export/. */
 function sourceFiles() {
@@ -128,8 +142,8 @@ function crcTable() {
   for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
   return t;
 }
-var CRC = null; // var: zip() runs above this line, before a let would be initialised
-function crc32(buf) { CRC ??= crcTable(); let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+// The table hangs off the (hoisted) function, so zip() works from anywhere in this file.
+function crc32(buf) { const t = (crc32.table ??= crcTable()); let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = t[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 
 /** A deterministic zip: entries in the order given, 1980-01-01 timestamps, no unix modes, no zip64. */
 function zip(entries) {

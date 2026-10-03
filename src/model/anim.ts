@@ -124,8 +124,9 @@ const TAU = Math.PI * 2;
 function holdLow(p: Pose): void {
   // Held clear of the belt and its pouches (front at x ≈ 7), so the hands and the
   // rifle read in front of the body rather than sunk into it.
-  p.gx = 9.5; p.gy = 31.5; p.gz = 1.5;
-  p.gYaw = 0.5; p.gPitch = -0.12; p.gRoll = 0.15;
+  // (the reference sheet: grip at his right hip, the pump out at his left, elbows hanging)
+  p.gx = 8.5; p.gy = 31; p.gz = 5.5;
+  p.gYaw = 0.55; p.gPitch = -0.1; p.gRoll = 0.15;
 }
 /** The rifle up at the chest, pointing straight ahead (PLAYE1/E3). */
 function holdAim(p: Pose): void {
@@ -398,10 +399,10 @@ export function solvePose(p: Pose, out: THREE.Matrix4[], time: number): void {
   const shL = S_SL.copy(PIVOT.shoulderL).applyMatrix4(torso);
   const tR = p.freeR > 0 ? gripR.lerp(S_T.set(p.hRx, p.hRy, p.hRz).applyMatrix4(torso), p.freeR) : gripR;
   const tL = p.freeL > 0 ? gripL.lerp(S_T.set(p.hLx, p.hLy, p.hLz).applyMatrix4(torso), p.freeL) : gripL;
-  // elbows: out to the side and a little back, so the forearms come around the
-  // body to the rifle instead of passing through the torso
-  const poleR = S_PR.set(-0.35, -0.3, 1).transformDirection(torso);
-  const poleL = S_PL.set(-0.35, -0.3, -1).transformDirection(torso);
+  // elbows: down at his sides and a little out and back, so the forearms come around
+  // the body to the rifle instead of passing through the torso (and never flare up)
+  const poleR = S_PR.set(-0.35, -0.8, 0.55).transformDirection(torso);
+  const poleL = S_PL.set(-0.35, -0.8, -0.55).transformDirection(torso);
   solveArm(out[B.uArmR], out[B.fArmR], PIVOT.shoulderR, PIVOT.elbowR, shR, tR, poleR);
   solveArm(out[B.uArmL], out[B.fArmL], PIVOT.shoulderL, PIVOT.elbowL, shL, tL, poleL);
 

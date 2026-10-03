@@ -103,8 +103,9 @@ export function loadSim(rotation: RotationKey = 'deathmatch', onMap?: (i: number
   if (!p) {
     p = (async () => {
       moduleP ??= compileSim(fetch(`${base()}doomsim.wasm`)).catch((err) => { moduleP = null; throw err; });
-      const [module, wad] = await Promise.all([moduleP, loadWad()]);
-      const maps = ROTATIONS[rotation].map((name) => ({ name, pwad: mapPwad(wad, name) }));
+      const [module, wad, paks] = await Promise.all([moduleP, loadWad(), Promise.all(ROTATIONS[rotation].map(fetchMapLumps))]);
+      // Each map's lumps come in its own pak; a full IWAD (the dev fallback) has them all.
+      const maps = ROTATIONS[rotation].map((name, i) => ({ name, pwad: mapPwad(paks[i] ? new Wad(paks[i]!) : wad, name) }));
       const sim = await DoomSim.create(module, maps, onMap);
       progress.sim = 1; report();
       return sim;
@@ -124,13 +125,34 @@ export function fetchMapArt(map: string): Promise<Uint8Array | null> {
   return p;
 }
 
-/** The game data with a map's art merged over the base (a fresh Wad: the renderer's per-map assets). */
-export async function mapWad(map: string): Promise<Wad> {
+/** A map's lumps (public/maps/<MAP>.map.wad), fetched once; null when there is none. */
+export function fetchMapLumps(map: string): Promise<Uint8Array | null> {
+  let p = lumpPaks.get(map);
+  if (!p) {
+    p = fetch(`${base()}maps/${map}.map.wad`).then(async (r) => (r.ok ? new Uint8Array(await r.arrayBuffer()) : null)).catch(() => null);
+    lumpPaks.set(map, p);
+  }
+  return p;
+}
+const lumpPaks = new Map<string, Promise<Uint8Array | null>>();
+
+/** The Cyberdemon's and the Spider Mastermind's sprites: boss rooms only. */
+let bossP: Promise<Uint8Array | null> | null = null;
+export function fetchBossArt(): Promise<Uint8Array | null> {
+  bossP ??= fetch(`${base()}maps/BOSSES.wad`).then(async (r) => (r.ok ? new Uint8Array(await r.arrayBuffer()) : null)).catch(() => null);
+  return bossP;
+}
+
+/**
+ * The game data for showing one map: the base, that map's lumps and art, and the
+ * bosses' sprites when the room has bosses (a fresh Wad: the renderer's per-map assets).
+ */
+export async function mapWad(map: string, bosses = false): Promise<Wad> {
   const base0 = await loadWad();
-  const art = await fetchMapArt(map);
-  if (!art || art.length <= 12 || !baseBytes) return base0;
+  const [lumps, art, boss] = await Promise.all([fetchMapLumps(map), fetchMapArt(map), bosses ? fetchBossArt() : Promise.resolve(null)]);
+  if (!baseBytes) return base0;
   const w = new Wad(baseBytes);
-  w.add(art);
+  for (const extra of [lumps, art, boss]) if (extra && extra.length > 12) w.add(extra);
   if (userWad) w.add(userWad, isArtLump);
   return w;
 }

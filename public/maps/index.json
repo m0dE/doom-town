@@ -1,6 +1,6 @@
 {
   "base": "freedm-lite.wad",
-  "baseBytes": 6823459,
+  "baseBytes": 2704604,
   "baseArtMap": "MAP19",
   "rotations": {
     "deathmatch": [
@@ -39,7 +39,9 @@
       "textures": 74,
       "flats": 36,
       "lines": 1257,
-      "sectors": 215
+      "sectors": 215,
+      "mapPak": "maps/MAP19.map.wad",
+      "mapPakBytes": 153431
     },
     "MAP24": {
       "title": "DM24: Flooded Base",
@@ -49,7 +51,9 @@
       "textures": 36,
       "flats": 28,
       "lines": 1853,
-      "sectors": 336
+      "sectors": 336,
+      "mapPak": "maps/MAP24.map.wad",
+      "mapPakBytes": 216506
     },
     "MAP20": {
       "title": "DM20: Warehouse",
@@ -59,7 +63,9 @@
       "textures": 81,
       "flats": 35,
       "lines": 1446,
-      "sectors": 191
+      "sectors": 191,
+      "mapPak": "maps/MAP20.map.wad",
+      "mapPakBytes": 165143
     },
     "MAP30": {
       "title": "DM30: Last Man Standing",
@@ -69,7 +75,9 @@
       "textures": 70,
       "flats": 46,
       "lines": 915,
-      "sectors": 162
+      "sectors": 162,
+      "mapPak": "maps/MAP30.map.wad",
+      "mapPakBytes": 103675
     },
     "MAP27": {
       "title": "DM27: The Exile",
@@ -79,7 +87,9 @@
       "textures": 15,
       "flats": 8,
       "lines": 639,
-      "sectors": 152
+      "sectors": 152,
+      "mapPak": "maps/MAP27.map.wad",
+      "mapPakBytes": 74966
     },
     "MAP32": {
       "title": "DM32: Fourplay",
@@ -89,7 +99,9 @@
       "textures": 69,
       "flats": 31,
       "lines": 1111,
-      "sectors": 164
+      "sectors": 164,
+      "mapPak": "maps/MAP32.map.wad",
+      "mapPakBytes": 127382
     },
     "MAP11": {
       "title": "DM11: Isolated Facility",
@@ -99,7 +111,9 @@
       "textures": 31,
       "flats": 21,
       "lines": 606,
-      "sectors": 63
+      "sectors": 63,
+      "mapPak": "maps/MAP11.map.wad",
+      "mapPakBytes": 72237
     },
     "MAP05": {
       "title": "DM05: Dense Fields",
@@ -109,7 +123,9 @@
       "textures": 16,
       "flats": 8,
       "lines": 531,
-      "sectors": 105
+      "sectors": 105,
+      "mapPak": "maps/MAP05.map.wad",
+      "mapPakBytes": 62273
     },
     "MAP18": {
       "title": "DM18: Deserted Courtyard",
@@ -119,7 +135,9 @@
       "textures": 22,
       "flats": 16,
       "lines": 619,
-      "sectors": 123
+      "sectors": 123,
+      "mapPak": "maps/MAP18.map.wad",
+      "mapPakBytes": 69296
     },
     "MAP17": {
       "title": "DM17: Underwoods",
@@ -129,7 +147,9 @@
       "textures": 19,
       "flats": 20,
       "lines": 399,
-      "sectors": 75
+      "sectors": 75,
+      "mapPak": "maps/MAP17.map.wad",
+      "mapPakBytes": 47674
     },
     "WAR01": {
       "title": "WAR01: Nukage Front",
@@ -139,7 +159,9 @@
       "textures": 51,
       "flats": 40,
       "lines": 5656,
-      "sectors": 1102
+      "sectors": 1102,
+      "mapPak": "maps/WAR01.map.wad",
+      "mapPakBytes": 842568
     },
     "WAR02": {
       "title": "WAR02: Canal City",
@@ -149,7 +171,13 @@
       "textures": 45,
       "flats": 29,
       "lines": 7069,
-      "sectors": 1519
+      "sectors": 1519,
+      "mapPak": "maps/WAR02.map.wad",
+      "mapPakBytes": 1034106
     }
+  },
+  "bosses": {
+    "pak": "maps/BOSSES.wad",
+    "bytes": 1149786
   }
 }

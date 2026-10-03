@@ -182,17 +182,17 @@ export class Game {
    */
   static async prewarm(): Promise<void> {
     if (warm) return;
-    const wad = await loadWad();
+    const [wad, mapData] = await Promise.all([loadWad(), mapWad(WARM_MAP)]);
     if (warm) return;
     const canvas = document.createElement('canvas');
     canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
     const t0 = performance.now();
     try {
-      const renderer = new Renderer(canvas, wad, WARM_MAP, { fov: prefs().fov });
+      const renderer = new Renderer(canvas, mapData, WARM_MAP, { fov: prefs().fov });
       // the 3D marines too: their factory and shader are part of the first frame
       if (prefs().players === '3d') renderer.setPlayerBodyRenderer(new ModelBodies(wad));
       // One frame now compiles every shader, which is otherwise the first frame of the match.
-      renderer.setFrame(warmupFrame(wad, WARM_MAP));
+      renderer.setFrame(warmupFrame(mapData, WARM_MAP));
       renderer.render();
       warm = { canvas, renderer, map: WARM_MAP };
     } catch { warm = null; }
@@ -884,8 +884,11 @@ export class Game {
   }
 
   private makeView(wad: Wad, fov: number): MapView {
-    const pre = warm;
+    // The start screen's view was built without the bosses' sprites; a boss room
+    // builds its own.
+    let pre = warm;
     warm = null;
+    if (pre && this.game.bosses) { pre.renderer.dispose(); pre = null; }
     const v = new MapView(fov, wad, pre);
     v.setPlayers(prefs().players);
     return v;
@@ -898,7 +901,7 @@ export class Game {
     if (want && want !== this.view.map && this.mapLoading !== want) {
       const id = snap.match[MV.map];
       this.mapLoading = want;
-      void mapWad(want).then((w) => {
+      void mapWad(want, this.game.bosses).then((w) => {
         if (this.disposed || this.mapLoading !== want) return;
         this.view.setMap(want, w, sim.nameTables(id));
         this.mapLoading = '';

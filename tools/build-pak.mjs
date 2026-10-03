@@ -151,7 +151,11 @@ for (const { map } of maps.values()) {
     if (d && !(d[0] >= 3001 && d[0] <= 3006) && !MONSTERS.includes(d[0])) wantSprites.add(d[2]);
   }
 }
-const sprites = [...wad.namespace('S').keys()].filter((n) => wantSprites.has(n.slice(0, 4)));
+// The bosses' sprites are most of a megabyte and only boss rooms show them: they ship
+// in their own pak (public/maps/BOSSES.wad), fetched by boss rooms alone.
+const BOSS_SPRITES = new Set(['CYBR', 'SPID']);
+const sprites = [...wad.namespace('S').keys()].filter((n) => wantSprites.has(n.slice(0, 4)) && !BOSS_SPRITES.has(n.slice(0, 4)));
+const bossSprites = [...wad.namespace('S').keys()].filter((n) => BOSS_SPRITES.has(n.slice(0, 4)));
 
 // ---- sounds ---------------------------------------------------------------
 const SOUNDS = ['pistol', 'shotgn', 'sgcock', 'dshtgn', 'dbopn', 'dbcls', 'dbload', 'plasma', 'bfg', 'sawup', 'sawidl', 'sawful', 'sawhit',
@@ -193,10 +197,8 @@ const L = [];
 const put = (name, data) => L.push({ name, data: data ?? new Uint8Array(0) });
 put('PLAYPAL', lump('PLAYPAL'));
 put('COLORMAP', lump('COLORMAP'));
-for (const [name, { lumps }] of maps) {
-  put(name, null);
-  for (const n of MAP_LUMPS) if (lumps.has(n)) put(n, lumps.get(n));
-}
+// Map lumps are not in the base: each map's are in public/maps/<MAP>.map.wad, and a
+// room fetches only its own rotation's (the sim needs every map of it from the start).
 put('PNAMES', pnamesOut);
 put('TEXTURE1', texture1);
 for (const n of sounds) put(n, lump(n));
@@ -231,6 +233,27 @@ for (const [name, a] of art) {
   totalPak += pak.length; totalPakGz += gz(pak);
   console.log(`public/maps/${name}.wad: ${patches.length} patches, ${flats.length} flats beyond the base — size ${kb(pak.length)}  gzip ${kb(gz(pak))}  sha256 ${sha(pak)}` +
     (a.missing.size ? `  MISSING: ${[...a.missing].join(' ')}` : ''));
+}
+// ---- per-map lump paks (what the sim and the renderer read the map from) -----------
+let totalLumps = 0, totalLumpsGz = 0;
+for (const [name, { lumps }] of maps) {
+  const ML = [{ name, data: new Uint8Array(0) }];
+  for (const n of MAP_LUMPS) if (lumps.has(n)) ML.push({ name: n, data: lumps.get(n) });
+  const pak = buildWadFile(ML);
+  writeFileSync(join(MAPS_DIR, `${name}.map.wad`), pak);
+  if (index.maps[name]) { index.maps[name].mapPak = `maps/${name}.map.wad`; index.maps[name].mapPakBytes = pak.length; }
+  totalLumps += pak.length; totalLumpsGz += gz(pak);
+}
+console.log(`map lump paks total ${kb(totalLumps)}  gzip ${kb(totalLumpsGz)}`);
+// ---- the bosses' sprites -------------------------------------------------------------
+{
+  const BL = [{ name: 'S_START', data: new Uint8Array(0) }];
+  for (const n of bossSprites) BL.push({ name: n, data: wad.nsLump('S', n).data });
+  BL.push({ name: 'S_END', data: new Uint8Array(0) });
+  const pak = buildWadFile(BL);
+  writeFileSync(join(MAPS_DIR, 'BOSSES.wad'), pak);
+  index.bosses = { pak: 'maps/BOSSES.wad', bytes: pak.length };
+  console.log(`public/maps/BOSSES.wad: ${bossSprites.length} sprite lumps — size ${kb(pak.length)}  gzip ${kb(gz(pak))}`);
 }
 writeFileSync(join(MAPS_DIR, 'index.json'), JSON.stringify(index, null, 2) + '\n');
 console.log(`map paks total ${kb(totalPak)}  gzip ${kb(totalPakGz)}; public/maps/index.json`);

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+assets/*.wad
+assets/*.zip
+sim/target/
+.cache/

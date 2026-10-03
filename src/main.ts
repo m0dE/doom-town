@@ -21,6 +21,7 @@ import { Account, type AccountState } from './menu/account.js';
 import { cleanRoomName } from './menu/rooms.js';
 import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
 import { MODES, MODE_ORDER, gameFor, roomNameFor, type ModeKey } from './menu/modes.js';
+import { indieProgress, startIndie } from './platform/indie.js';
 import type { Game } from './game/game.js';
 
 declare const __BUILD_REV__: string;
@@ -50,6 +51,10 @@ fitLogo();
 addEventListener('resize', fitLogo);
 const rev = typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev';
 $('build').textContent = `build ${rev}`;
+
+// The indie.fun SDK, in that export only (src/platform/indie.ts).
+startIndie();
+indieProgress('menu');
 
 // Everything a match needs starts downloading now.
 prefetch();
@@ -230,6 +235,7 @@ async function play(room: string, offline: boolean): Promise<void> {
     for (const k of ['central', 'nodeUrl', 'via'] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }
     history.replaceState(null, '', `${location.pathname}?${keep}`);
     loading.classList.add('hidden');
+    if (!offline) indieProgress('match_joined');
     game.onLeave = () => {
       game.dispose();
       (window as unknown as { __game?: Game }).__game = undefined;

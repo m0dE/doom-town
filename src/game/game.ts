@@ -48,6 +48,7 @@ import { PauseMenu } from './pause.js';
 import { ModelBodies, bodyDebug } from './bodies.js';
 import { prefs, savePrefs, cleanName } from '../menu/prefs.js';
 import { parseMap, SPRITE_NAMES, type Wad } from '../wad/index.js';
+import { indieProgress, indieScore } from '../platform/indie.js';
 import type { RenderEvent, RenderFrame, RenderMobj, RenderSector } from '../render/types.js';
 
 const { renderTimes } = lockstep;
@@ -252,6 +253,9 @@ export class Game {
   private readonly face = new FaceWidget();
   private faceAcc = 0;
   private faceTic = 0;
+  /** What indie.fun was last told (src/platform/indie.ts): frags, and whether this intermission was reported. */
+  private indieFrags = 0;
+  private indieInter = false;
 
   // the reused RenderFrame
   private readonly frame: RenderFrame;
@@ -816,6 +820,7 @@ export class Game {
     // whatever the room's mode and timings are.
     const inter = snap.match[MV.phase] === PHASE_INTERMISSION;
     const timeLeft = Math.max(0, snap.match[MV.phaseLeft]) / TICRATE;
+    if (!this.net.offline) this.reportIndie(me >= 0 ? rows[me * ROW_WORDS + R_FRAGS] : 0, inter);
     const st = this.net.statusText;
     this.hud.update({
       pv, face: this.face.index, color: this.colors.get(this.id) ?? 0,
@@ -832,6 +837,17 @@ export class Game {
   }
 
   private scoresAt = 0;
+  /** indie.fun's funnel and leaderboard: online matches only, and only on a change. */
+  private reportIndie(frags: number, inter: boolean): void {
+    if (frags !== this.indieFrags) {
+      if (frags > 0 && this.indieFrags <= 0) indieProgress('first_frag');
+      this.indieFrags = frags;
+      indieScore(frags);
+    }
+    if (inter && !this.indieInter) indieProgress('match_finished');
+    this.indieInter = inter;
+  }
+
   /** The scoreboard's rows are rebuilt at 4 Hz, only while it can be seen. */
   private scoresWanted(now: number): boolean {
     if (now - this.scoresAt < 250) return false;

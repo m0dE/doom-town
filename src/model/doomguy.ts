@@ -35,8 +35,8 @@ export interface DoomguyPoseInput {
   /** seconds, monotonic */
   time: number;
   /**
-   * The death throws the body (rocket, plasma, BFG): while dying (frames H..N) the
-   * keyframed fall is replaced by a ragdoll launched with this push. Read once.
+   * How the killing blow pushes the body (every death is a ragdoll; without a kick it
+   * falls backwards). Give it once, on the frame it is known.
    */
   kick?: RagdollKick | null;
   /** floor and ceiling under the body, model space (y; default 0 and none) */
@@ -79,6 +79,8 @@ export class DoomguyModel {
   private seed: number;
   private fuzz = false;
   private ragdoll: Ragdoll | null = null;
+  /** the ragdoll has had its obituary's push */
+  private kicked = false;
 
   constructor(private readonly shared: Shared, color = 0, seed = 0) {
     this.seed = seed;
@@ -178,6 +180,7 @@ export class DoomguyModel {
 
   pose(p: DoomguyPoseInput): void {
     const time = p.time;
+    const stale = this.lastTime < 0 || time - this.lastTime > 0.25;
     const dt = this.lastTime < 0 ? 0 : Math.max(0, Math.min(0.1, time - this.lastTime));
     this.lastTime = time;
     const frame = Math.max(0, Math.min(FRAME.W, p.frame | 0));
@@ -234,8 +237,25 @@ export class DoomguyModel {
 
     this.uniforms.uFullbright.value = frame === FRAME.F ? 1 : 0;
 
+    // every death is a ragdoll: from the pose he was hit in, knocked back (no kick known
+    // yet: backwards, lightly). The obituary's kick may land a moment later: added on top.
+    // A death is fresh while the sim shows H..J (under a second in); a body first seen
+    // later than that (an old corpse coming into view) keeps the keyframes.
     if (!dying || frame >= FRAME.O) this.ragdoll = null;
-    else if (p.kick && !this.ragdoll) this.ragdoll = new Ragdoll(this.mats, p.kick, this.seed);
+    else if (!this.ragdoll) {
+      const seenAlive = !stale && this.lastFrame >= 0 && this.lastFrame < FRAME.H;
+      if (seenAlive || frame <= FRAME.J || p.kick) {
+        if (!seenAlive) {
+          // not watched while he was hit: fall from standing
+          solvePose(poseFor({ frame: FRAME.A, progress: 0, time, walkPhase: 0, walkAmp: 0, pitch: 0, airborne: false, deathTics: 0 }), this.mats, time);
+        }
+        this.ragdoll = new Ragdoll(this.mats, p.kick ?? { dx: -1, dz: 0, power: 0.3, kind: 3 }, this.seed);
+        this.kicked = !!p.kick;
+      }
+    } else if (p.kick && !this.kicked && this.ragdoll.t < 0.6) {
+      this.ragdoll.push(p.kick, this.seed + 1);
+      this.kicked = true;
+    }
 
     if (this.ragdoll) {
       this.uniforms.uGore.value = 0;

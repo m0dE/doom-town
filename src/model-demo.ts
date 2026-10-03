@@ -6,7 +6,7 @@
  *   ?mode=sheet     all 8 rotations side by side (&frame=A..W)
  *   ?mode=anims     one cell per animation, mid-pose (&angle=degrees)
  *   ?mode=perf      100 animated instances, frame time in the corner
- *   ?mode=ragdoll   rocket, plasma and BFG deaths thrown by the ragdoll, looping
+ *   ?mode=ragdoll   ragdoll deaths (rocket, plasma, BFG, shotgun, chaingun), looping
  *                   (&t=seconds after the hit: a still, simulated up to then)
  *   &t=seconds      freeze time (screenshots); &color=n player colour
  */
@@ -509,11 +509,13 @@ function ragdoll(factory: DoomguyFactory, info: string): void {
     { name: 'rocket', kick: { dx: 1, dz: 0.15, power: 0.9, kind: 0 } },
     { name: 'plasma', kick: { dx: 1, dz: -0.1, power: 0.6, kind: 1 } },
     { name: 'BFG', kick: { dx: 0.8, dz: 0.5, power: 1, kind: 2 } },
+    { name: 'shotgun', kick: { dx: 1, dz: 0.2, power: 0.5, kind: 3 } },
+    { name: 'chaingun', kick: { dx: 1, dz: -0.3, power: 0.15, kind: 3 } },
   ];
   const guys = kinds.map((k, i) => {
     const m = factory.create(i + 1, i + 3);
     m.setLight(220);
-    m.object.position.set(-40, 0, (i - 1) * 110);
+    m.object.position.set(-40, 0, (i - 2) * 100);
     m.object.rotation.y = Math.PI; // facing the shooter at -X: the push is along +X world, his back
     scene.add(m.object);
     return { m, ...k };
@@ -556,7 +558,7 @@ function ragdoll(factory: DoomguyFactory, info: string): void {
       });
     }
     cam.aspect = w / h;
-    cam.position.set(-260, 150, 300);
+    cam.position.set(-330, 170, 380);
     cam.lookAt(20, 20, 0);
     cam.updateProjectionMatrix();
     renderer.setScissorTest(false);
@@ -564,7 +566,7 @@ function ragdoll(factory: DoomguyFactory, info: string): void {
     renderer.render(scene, cam);
     octx.clearRect(0, 0, w, h);
     guys.forEach((gy, i) => {
-      const p = new THREE.Vector3(-40, 75, (i - 1) * 110).project(cam);
+      const p = new THREE.Vector3(-40, 75, (i - 2) * 100).project(cam);
       label(gy.name, (p.x * 0.5 + 0.5) * w, (0.5 - p.y * 0.5) * h);
     });
     statsEl.textContent = info;

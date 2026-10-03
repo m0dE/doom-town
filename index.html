@@ -52,14 +52,11 @@
         <div class="panel-head">
           <h2>Servers</h2>
           <span id="rooms-status" class="muted"></span>
+          <button id="create-btn" class="btn small create" type="button">Create room</button>
         </div>
         <div id="mode-tabs" class="mode-tabs" role="tablist" aria-label="Game mode"></div>
         <div class="srv-cols" aria-hidden="true"><span>Room</span><span>Map</span><span>Players</span><span>Up</span><span></span></div>
         <div id="rooms" class="srv-list"></div>
-        <form id="custom" class="custom" autocomplete="off">
-          <input id="room" type="text" maxlength="32" placeholder="Or type a room name to start your own" aria-label="Room name" spellcheck="false">
-          <button class="btn small" type="submit">Join room</button>
-        </form>
       </div>
       <p id="error" class="error" role="alert"></p>
     </section>
@@ -87,6 +84,24 @@
       <div class="bar"><i id="loading-bar"></i></div>
     </div>
   </div>
+
+  <dialog id="create" class="dialog">
+    <h2>Create room</h2>
+    <form id="create-form" class="create-form" autocomplete="off">
+      <label for="room">Room name</label>
+      <input id="room" type="text" maxlength="24" placeholder="my-room" spellcheck="false">
+      <fieldset>
+        <legend>Mode</legend>
+        <div id="create-modes" class="create-modes"></div>
+      </fieldset>
+      <label class="check"><input id="create-bosses" type="checkbox"> Random bosses</label>
+      <p id="create-preview" class="muted create-preview"></p>
+      <div class="create-actions">
+        <button class="btn small ghosted" type="button" data-act="cancel">Cancel</button>
+        <button class="btn small" type="submit">Create &amp; join</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="controls" class="dialog">
     <h2>Controls</h2>

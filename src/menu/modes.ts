@@ -74,6 +74,16 @@ export function gameFor(mode: ModeKey, bosses: boolean, ghosts: boolean = GHOSTS
 }
 
 /**
+ * The name of a new room playing `g`: the player's own words with any game words taken
+ * out, then the game's words, so roomGame(roomNameFor(base, g)) plays g.
+ */
+export function roomNameFor(base: string, g: RoomGame): string {
+  const game = new Set([...Object.keys(WORDS), 'boss', 'bosses', 'ghost', 'ghosts', 'nocollide', 'solid', 'collide']);
+  const own = base.split(/[-_]+/).filter((w) => w && !game.has(w)).join('-').slice(0, 32 - g.kind.length - 1).replace(/-+$/, '');
+  return [own || 'room', g.kind].filter(Boolean).join('-');
+}
+
+/**
  * Where in its rotation a room starts. Without this every room of a mode would open on
  * the same first map and the server list would read the same map down every row; with
  * it na-1 and na-2 start on different maps. A hash of the name, so every client agrees.

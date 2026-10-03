@@ -21,6 +21,7 @@ import { Account, type AccountState } from './menu/account.js';
 import { cleanRoomName } from './menu/rooms.js';
 import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
 import { ALL_MAPS } from './sim/maps.js';
+import { MODES, MODE_ORDER, gameFor, roomNameFor, type ModeKey } from './menu/modes.js';
 import type { Game } from './game/game.js';
 
 declare const __BUILD_REV__: string;
@@ -136,10 +137,32 @@ const browser = new ServerBrowser($('rooms'), $('rooms-status'), $<HTMLButtonEle
 browser.onJoin = (room) => void play(room, false);
 // Practice against bots has no button (?offline=1 is the way in); tests start it from the warm menu.
 (window as unknown as { __practice?: () => void }).__practice = () => void play('practice', true);
-$<HTMLFormElement>('custom').addEventListener('submit', (e) => {
+
+// Create room: a name, a mode and bosses make a room name (rooms are their names - modes.ts).
+const create = $<HTMLDialogElement>('create');
+const createModes = $('create-modes');
+const createBosses = $<HTMLInputElement>('create-bosses');
+const createPreview = $('create-preview');
+createModes.innerHTML = MODE_ORDER.map((k, i) =>
+  `<label><input type="radio" name="create-mode" value="${k}"${i === 0 ? ' checked' : ''}><b>${esc(MODES[k].label)}</b><small>${esc(MODES[k].blurb)}</small></label>`).join('');
+function createdRoom(): { name: string; label: string } {
+  const mode = (createModes.querySelector<HTMLInputElement>('input:checked')?.value ?? 'dm') as ModeKey;
+  const g = gameFor(mode, createBosses.checked);
+  return { name: roomNameFor(cleanRoomName(roomIn.value), g), label: g.label };
+}
+function paintCreate(): void {
+  const mode = createModes.querySelector<HTMLInputElement>('input:checked')?.value;
+  createBosses.disabled = mode !== 'dm' && mode !== 'tdm';
+  const r = createdRoom();
+  createPreview.innerHTML = `Room <b>${esc(r.name)}</b> · ${esc(r.label)}`;
+}
+create.addEventListener('input', paintCreate);
+$('create-btn').addEventListener('click', () => { paintCreate(); create.showModal(); roomIn.focus(); });
+create.querySelector('[data-act="cancel"]')!.addEventListener('click', () => create.close());
+$<HTMLFormElement>('create-form').addEventListener('submit', (e) => {
   e.preventDefault();
-  const room = cleanRoomName(roomIn.value);
-  if (!room) { roomIn.focus(); return; }
+  const room = createdRoom().name;
+  create.close();
   void play(room, false);
 });
 

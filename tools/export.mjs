@@ -5,7 +5,7 @@
  *   npm run export                    # typecheck, build, zip into export/
  *   npm run export -- --no-build      # re-zip what is already in export/doom-town
  *   npm run export -- --unpublished   # allow uncommitted or unpushed work (not for upload)
- *   INDIE_APP_ID=app_… npm run export:indiefun   # the indie.fun edition (--platform=indiefun)
+ *   npm run export:indiefun           # the indie.fun edition (--platform=indiefun)
  *
  * Writes:
  *   export/doom-town/          the site (index.html at its root, relative URLs only)
@@ -13,8 +13,9 @@
  *   export/BUILD.txt        what this build is: commit, app id, sizes, sha256
  *
  * The indie.fun edition is the same game with the indie.fun SDK switched on
- * (src/platform/indie.ts): its App ID - INDIE_APP_ID, or --indie-app-id=app_… -
- * is baked into the bundle as VITE_INDIE_APP_ID, and the page then loads
+ * (src/platform/indie.ts): its App ID - doom-town's on indie.fun, or another
+ * from INDIE_APP_ID / --indie-app-id=app_… - is baked into the bundle as
+ * VITE_INDIE_APP_ID, and the page then loads
  * https://www.indie.fun/js/indie.js for sessions, frame rate, crash reports,
  * a progression funnel and a frags leaderboard. It writes
  * export/doom-town-indiefun/, export/doom-town-indiefun.zip and
@@ -55,12 +56,14 @@ const ZIP = path.join(OUT, `${SLUG}.zip`);
 const MAX_FILES = 5000;
 const MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_APP_ID = 'app_1791001468308_ac7590dffc2a';
+/** doom-town on indie.fun. Public by design (the SDK sends it on every request); its App SECRET is never needed here. */
+const DEFAULT_INDIE_APP_ID = 'app_3ba753d042635ce686e2bad9';
 
 const mib = (n) => `${(n / 1024 / 1024).toFixed(1)} MiB`;
 const fail = (why) => { console.error(`export refused: ${why}`); process.exit(1); };
 
 if (!PLATFORMS.includes(PLATFORM)) fail(`unknown --platform=${PLATFORM} (one of: ${PLATFORMS.join(', ')})`);
-const INDIE_APP_ID = INDIE ? (arg('indie-app-id', process.env.INDIE_APP_ID ?? process.env.VITE_INDIE_APP_ID ?? '')).trim() : '';
+const INDIE_APP_ID = INDIE ? (arg('indie-app-id', process.env.INDIE_APP_ID || process.env.VITE_INDIE_APP_ID || DEFAULT_INDIE_APP_ID)).trim() : '';
 if (INDIE && !INDIE_APP_ID) fail('the indie.fun edition needs its App ID: INDIE_APP_ID=app_… (indie.fun → your game → API Keys; the public id, never the secret)');
 if (INDIE && !/^app_[A-Za-z0-9_]+$/.test(INDIE_APP_ID)) fail(`"${INDIE_APP_ID}" does not look like an indie.fun App ID (app_…)`);
 if (/^sk_/.test(INDIE_APP_ID)) fail('that is an App SECRET; the page takes only the public App ID');

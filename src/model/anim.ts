@@ -180,7 +180,7 @@ export function poseFor(inp: PoseInput): Pose {
     p.hy = -0.05 * s * amp;
     p.gy += 0.6 * Math.abs(c) * amp;
   } else {
-    p.thRx = 0.02; p.thLx = -0.02;
+    p.thRx = 0.07; p.thLx = -0.07;
   }
 
   if (f === FRAME.E || f === FRAME.F) {

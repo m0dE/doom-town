@@ -35,8 +35,46 @@ export interface FaceSource {
   scatter?: boolean;
 }
 
-/** Source for a face: a sprite rectangle, a solid palette index, or derived (tops and bottoms). */
-export type FaceSpec = FaceSource | number | 'derive';
+/**
+ * A painted face: the palette colour nearest `paint` (sRGB 0..255), in blocky shade
+ * noise (low-poly flat colour, a little texture). `green`: stay in the green ramp
+ * 0x70..0x7F, which the player colour translations remap (the suit).
+ */
+export interface PaintSpec { paint: readonly [number, number, number]; green?: boolean }
+
+/** Source for a face: a sprite rectangle, a painted colour, a solid palette index, or derived (tops and bottoms). */
+export type FaceSpec = FaceSource | PaintSpec | number | 'derive';
+
+/** Nearest palette index to an sRGB colour (optionally among `allow`ed indices). */
+export function nearestPal(pal: PaletteData, r: number, g: number, b: number, allow?: (i: number) => boolean): number {
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < 256; i++) {
+    if (allow && !allow(i)) continue;
+    const dr = pal.playpal[i * 3] - r, dg = pal.playpal[i * 3 + 1] - g, db = pal.playpal[i * 3 + 2] - b;
+    // weighted toward green like the eye
+    const d = dr * dr * 0.3 + dg * dg * 0.59 + db * db * 0.11;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+/** A painted face image `w`×`h`: 2×2-texel blocks of the colour, a few a shade darker. */
+export function paintRect(pal: PaletteData, spec: PaintSpec, w: number, h: number, seed: number): IndexImage {
+  const allow = spec.green ? (i: number) => i >= 0x70 && i <= 0x7f : (i: number) => i !== 0 && !(i >= 0x70 && i <= 0x7f);
+  const [r, g, b] = spec.paint;
+  // mostly the flat colour, some blocks one or two COLORMAP rows darker: a low-poly look, not camouflage
+  const base = nearestPal(pal, r, g, b, allow);
+  const shades = [base, base, base, base, base, shadeIndex(pal, base, 1), shadeIndex(pal, base, 2)];
+  const px = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let x = Math.imul((i >> 1) + 1, 0x9e3779b1) ^ Math.imul((j >> 1) + 7, 0x85ebca6b) ^ Math.imul(seed + 3, 0xc2b2ae35);
+      x ^= x >>> 15; x = Math.imul(x, 0x2c1b3c6d); x ^= x >>> 12;
+      px[j * w + i] = shades[(x >>> 0) % shades.length];
+    }
+  }
+  return { w, h, px };
+}
 
 const CLASSES: Record<string, (i: number) => boolean> = {
   G: (i) => i >= 0x70 && i <= 0x7f,

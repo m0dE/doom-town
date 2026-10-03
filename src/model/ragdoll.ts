@@ -123,7 +123,11 @@ export class Ragdoll {
     };
     reach(SH_R, ELB_R, HAND_R, 0.4); reach(SH_L, ELB_L, HAND_L, 0.4);
     reach(HIP_R, KNEE_R, FOOT_R, 0.55); reach(HIP_L, KNEE_L, FOOT_L, 0.55);
-    this.sticks.push({ a: KNEE_R, b: KNEE_L, min: 5, max: 40 }, { a: FOOT_R, b: FOOT_L, min: 5, max: 44 });
+    this.sticks.push({ a: KNEE_R, b: KNEE_L, min: 8, max: 40 }, { a: FOOT_R, b: FOOT_L, min: 8, max: 46 });
+    // hips: a leg swings forward, back and out, but never across the other one — knee and
+    // foot keep at least their standing distance from the opposite hip
+    const across = (p: number, hip: number) => this.sticks.push({ a: p, b: hip, min: this.pos[p].distanceTo(this.pos[hip]) * 0.97, max: 1e9 });
+    across(KNEE_R, HIP_L); across(FOOT_R, HIP_L); across(KNEE_L, HIP_R); across(FOOT_L, HIP_R);
     // hands and knees stay out of the chest/belly
     for (const p of [HAND_R, HAND_L, ELB_R, ELB_L]) this.sticks.push({ a: p, b: p === HAND_R || p === ELB_R ? SH_L : SH_R, min: 9, max: 1e9 });
     for (const p of [KNEE_R, KNEE_L]) this.sticks.push({ a: p, b: NECK, min: 14, max: 1e9 });
@@ -164,7 +168,12 @@ export class Ragdoll {
       const along = light ? (i === KNEE_R || i === KNEE_L ? -0.5 : high * high * 0.8) : 0.55 + 0.6 * high;
       const vx = kick.dx * h * along + r1 * jit * loose;
       const vy = (light ? u * high : u * (0.85 + 0.25 * high)) + r2 * jit * 0.5 * loose;
-      const vz = kick.dz * h * along + r3 * jit * loose;
+      let vz = kick.dz * h * along + r3 * jit * loose;
+      // the legs splay: knees and feet are kicked out to their own side (a little more on light hits)
+      if (i === KNEE_R || i === FOOT_R || i === KNEE_L || i === FOOT_L) {
+        const out = (i === KNEE_R || i === FOOT_R ? 1 : -1) * (25 + 45 * hash(seed * 31 + (i === KNEE_R || i === FOOT_R ? 1 : 2))) * (light ? 1.2 : 1);
+        vz += out;
+      }
       this.prev[i].x -= vx * STEP; this.prev[i].y -= vy * STEP; this.prev[i].z -= vz * STEP;
     }
   }

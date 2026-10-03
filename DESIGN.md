@@ -442,8 +442,11 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   keyframed fall: bullets and fists knock him over, rockets (or splash), plasma and the
   BFG throw him, away from the killer. Only an old corpse coming into view keeps the
   keyframed pose. Visual only; the sim
-  never sees it. Proportions: legs half his height, thick legs and boots, compact
-  pads (2026-10-03, after the user's reference sheet).
+  never sees it. Look (2026-10-03, after the user's low-poly reference sheet): legs half
+  his height, thick legs and boots, rounded green shoulder sleeves; faces painted flat
+  palette colours in blocky shade noise (`PaintSpec`, rig.ts) — tan helmet, dark visor,
+  green suit (kept in the green ramp so player colours apply), bare arms, dark gloves,
+  khaki boots, dark gun with wood.
 - The renderer is fed a `RenderFrame` (`src/render/types.ts`) by the game loop:
   interpolated mobjs, sector heights/light, line textures, camera (x, y, z, yaw, pitch),
   psprites, and the event list for effects. It never touches the sim.

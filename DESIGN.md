@@ -21,9 +21,9 @@ first, then the code.
   github.com/m0dE/doom-town). "DOOM" is id/ZeniMax's trademark: never use id's logo
   artwork, keep "Game art: Freedoom" visible, and the README carries the
   not-affiliated line. Directory and code identifiers may say `doom`.
-- The published bundle carries `LICENSE.txt`, `COPYING-FREEDOOM.txt` and `source.zip`
-  (the full corresponding source of this directory), linked from the menu's footer —
-  that is how GPL §3(a) is met for a web build.
+- The published bundle carries `LICENSE.txt` and `COPYING-FREEDOOM.txt`; the menu's
+  footer links the source to the public repo, github.com/m0dE/doom-town (no bundled
+  source zip).
 
 ## Layout
 

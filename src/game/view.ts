@@ -95,7 +95,7 @@ export class MapView implements WorldView {
     const r = this.renderer;
     if (!r) return {};
     const b = r.playerBodyRenderer as ModelBodies | null;
-    return { ...r.stats, bodies3d: b?.count ?? 0, posed3d: b?.posed ?? 0 };
+    return { ...r.stats, bodies3d: b?.count ?? 0, posed3d: b?.posed ?? 0, ragdolls3d: b?.ragdolls ?? 0 };
   }
 
   dispose(): void {

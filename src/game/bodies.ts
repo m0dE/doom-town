@@ -17,9 +17,11 @@
  *   - MF_SHADOW: the fuzz pass (multiply-darkening streaks, as the sprites);
  *   - colour: the RenderMobj's translation; a corpse (slot -1) keeps the colour it
  *     had while it was a player;
- *   - ragdoll: an obituary by rocket (or its splash), plasma or the BFG throws the
- *     body: the model ragdolls (src/model/ragdoll.ts), pushed away from the killer
- *     (or along the body's own motion for a suicide), as hard as the killing blow.
+ *   - ragdoll: every death falls as a ragdoll (src/model/ragdoll.ts); the obituary
+ *     says how: pushed away from the killer (or along the body's own motion for a
+ *     suicide), as hard as the killing blow — bullets knock him over, rockets,
+ *     plasma and the BFG throw him. A dying body is posed even off camera, so its
+ *     fall is not frozen while nobody looks.
  *
  * Models share the factory's geometry and textures (one draw call each); bodies
  * that vanish go back to a small free list, the rest are disposed.
@@ -39,8 +41,12 @@ const AIRBORNE = 6;
 const FREE_KEEP = 8;
 /** drawn bodies further than this are not posed (they are too small to read, and off the camera's interest) */
 const POSE_RANGE = 4096;
-/** means of death (obituary `mod`) that throw the body → ragdoll kind (0 explosion, 1 plasma, 2 BFG) */
-const THROWN: Record<number, number> = { 5: 0, 13: 0, 6: 1, 7: 2 };
+/** means of death (obituary `mod`) → ragdoll kind (0 explosion, 1 plasma, 2 BFG, 3 knock-back) and a
+ * typical killing blow to scale the push by */
+const THROWN: Record<number, [kind: number, blow: number]> = {
+  5: [0, 160], 13: [0, 160], 6: [1, 40], 7: [2, 160],
+  1: [3, 20], 14: [3, 60], 8: [3, 20], 2: [3, 15], 4: [3, 15], 3: [3, 50], 9: [3, 120], 10: [3, 100],
+};
 /** a kick waits this long (s) for its body to show the death frames */
 const KICK_TTL = 1.5;
 
@@ -116,6 +122,8 @@ export class ModelBodies implements PlayerBodyRenderer {
   private disposed = false;
   /** bodies posed last frame (for the debug line / tests) */
   posed = 0;
+  /** bodies ragdolling last frame (for tests) */
+  ragdolls = 0;
 
   constructor(wad: Wad) {
     this.factory = factoryFor(wad);
@@ -163,7 +171,8 @@ export class ModelBodies implements PlayerBodyRenderer {
       const dx = m.x - cam.position.x, dy = m.y - cam.position.y;
       const visible = this.frustum.intersectsSphere(this.sphere) && dx * dx + dy * dy < POSE_RANGE * POSE_RANGE;
       h.visible = visible;
-      if (!visible) continue;
+      const dying = (m.frame & FF_FRAMEMASK) >= 7 && (m.frame & FF_FRAMEMASK) <= 13;
+      if (!visible && !(dying && b.model.ragdolling) && !(dying && this.kicks.has(m.id))) continue;
       posed++;
       const frame = m.frame & FF_FRAMEMASK;
       const model = b.model;
@@ -195,6 +204,9 @@ export class ModelBodies implements PlayerBodyRenderer {
       });
     }
     this.posed = posed;
+    let rd = 0;
+    for (const b of this.live.values()) if (b.model.ragdolling) rd++;
+    this.ragdolls = rd;
     for (const [id, k] of this.kicks) if (ctx.time - k.at > KICK_TTL) this.kicks.delete(id);
     // bodies that are gone: back to the free list, or disposed
     for (const [id, b] of this.live) {
@@ -222,8 +234,7 @@ export class ModelBodies implements PlayerBodyRenderer {
     for (let i = 0; i < ctx.eventCount; i++) {
       const e = ev[i];
       if (e.kind !== EV_OBITUARY) continue;
-      const kind = THROWN[e.c];
-      if (kind === undefined) continue;
+      const [kind, blow] = THROWN[e.c] ?? [3, 0];
       const victim = ctx.playerAt(e.a);
       if (!victim) continue;
       // away from the killer; a suicide (or an unseen killer) along the body's own motion, else backwards
@@ -235,7 +246,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       if (Math.hypot(dx, dy) < 1) { dx = -Math.cos(victim.angle); dy = -Math.sin(victim.angle); }
       const l = Math.hypot(dx, dy);
       const dmg = this.hurt.get(e.a) ?? 0;
-      const power = kind === 1 ? Math.min(1, dmg / 40) : Math.min(1, dmg / 160);
+      const power = blow > 0 ? Math.min(1, dmg / blow) : 0;
       this.kicks.set(victim.id, { kick: { dx: dx / l, dz: dy / l, power, kind }, at: ctx.time });
     }
   }

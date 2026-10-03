@@ -27,6 +27,8 @@ npm run dev          # http://localhost:5190  (?offline=1 plays against bots alo
 npm run build:sim    # rebuild public/doomsim.wasm (needs Rust + wasm32-unknown-unknown)
 npm run fetch && npm run pak   # rebuild public/freedm-lite.wad from FreeDM
 npm run export       # the build to upload to arrr.fun
+npm run export:indiefun   # the indie.fun build: same game + the indie.fun SDK
+INDIE_DEPLOY_KEY=idk_… npm run deploy:indiefun   # build it and publish it to indie.fun
 ```
 
 How the parts fit is in [DESIGN.md](DESIGN.md).

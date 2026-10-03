@@ -5,11 +5,23 @@
  *   npm run export                    # typecheck, build, zip into export/
  *   npm run export -- --no-build      # re-zip what is already in export/doom-town
  *   npm run export -- --unpublished   # allow uncommitted or unpushed work (not for upload)
+ *   npm run export:indiefun           # the indie.fun edition (--platform=indiefun)
  *
  * Writes:
  *   export/doom-town/          the site (index.html at its root, relative URLs only)
  *   export/doom-town.zip       the upload: deterministic (fixed timestamps, sorted entries)
  *   export/BUILD.txt        what this build is: commit, app id, sizes, sha256
+ *
+ * The indie.fun edition is the same game with the indie.fun SDK switched on
+ * (src/platform/indie.ts): its App ID - doom-town's on indie.fun, or another
+ * from INDIE_APP_ID / --indie-app-id=app_… - is baked into the bundle as
+ * VITE_INDIE_APP_ID, and the page then loads
+ * https://www.indie.fun/js/indie.js for sessions, frame rate, crash reports,
+ * a progression funnel and a frags leaderboard. It writes
+ * export/doom-town-indiefun/, export/doom-town-indiefun.zip and
+ * export/BUILD-indiefun.txt beside the arrr.fun build. The App ID is public;
+ * the App SECRET is never needed here. The arrr.fun build is always built
+ * without an indie App ID, whatever the environment says.
  *
  * The site carries what GPL-2.0 §3(a) asks of a web build: LICENSE.txt, the
  * Freedoom data's COPYING and CREDITS, and source.zip - the complete
@@ -34,23 +46,36 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const arg = (name, fallback) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
 const flag = (name) => process.argv.includes(`--${name}`);
 
-const SLUG = arg('slug', 'doom-town');
+const PLATFORMS = ['arrr', 'indiefun'];
+const PLATFORM = arg('platform', 'arrr');
+const INDIE = PLATFORM === 'indiefun';
+const SLUG = arg('slug', INDIE ? 'doom-town-indiefun' : 'doom-town');
 const OUT = path.resolve(ROOT, arg('out', 'export'));
 const SITE = path.join(OUT, SLUG);
 const ZIP = path.join(OUT, `${SLUG}.zip`);
 const MAX_FILES = 5000;
 const MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_APP_ID = 'app_1791001468308_ac7590dffc2a';
+/** doom-town on indie.fun. Public by design (the SDK sends it on every request); its App SECRET is never needed here. */
+const DEFAULT_INDIE_APP_ID = 'app_3ba753d042635ce686e2bad9';
 
 const mib = (n) => `${(n / 1024 / 1024).toFixed(1)} MiB`;
 const fail = (why) => { console.error(`export refused: ${why}`); process.exit(1); };
+
+if (!PLATFORMS.includes(PLATFORM)) fail(`unknown --platform=${PLATFORM} (one of: ${PLATFORMS.join(', ')})`);
+const INDIE_APP_ID = INDIE ? (arg('indie-app-id', process.env.INDIE_APP_ID || process.env.VITE_INDIE_APP_ID || DEFAULT_INDIE_APP_ID)).trim() : '';
+if (INDIE && !INDIE_APP_ID) fail('the indie.fun edition needs its App ID: INDIE_APP_ID=app_… (indie.fun → your game → API Keys; the public id, never the secret)');
+if (INDIE && !/^app_[A-Za-z0-9_]+$/.test(INDIE_APP_ID)) fail(`"${INDIE_APP_ID}" does not look like an indie.fun App ID (app_…)`);
+if (/^sk_/.test(INDIE_APP_ID)) fail('that is an App SECRET; the page takes only the public App ID');
 
 // ---------------------------------------------------------------------------- build
 
 if (!flag('no-build')) {
   console.log(`building into ${path.relative(ROOT, SITE)}/`);
   execFileSync('npx', ['tsc', '--noEmit'], { cwd: ROOT, stdio: 'inherit' });
-  execFileSync('npx', ['vite', 'build', '--outDir', path.relative(ROOT, SITE), '--emptyOutDir'], { cwd: ROOT, stdio: 'inherit' });
+  // The platform is a property of the build, so the environment the bundle is built in says it exactly.
+  const env = { ...process.env, VITE_INDIE_APP_ID: INDIE_APP_ID };
+  execFileSync('npx', ['vite', 'build', '--outDir', path.relative(ROOT, SITE), '--emptyOutDir'], { cwd: ROOT, stdio: 'inherit', env });
 }
 if (!existsSync(path.join(SITE, 'index.html'))) fail(`no index.html in ${SITE} — run without --no-build`);
 
@@ -134,6 +159,12 @@ if (absolute.length) fail(`index.html asks for ${absolute.length} file(s) by abs
 for (const need of ['doomsim.wasm', 'freedm-lite.wad', 'LICENSE.txt', 'COPYING-FREEDOOM.txt', 'source.zip']) {
   if (!files.includes(need)) fail(`the site has no ${need}`);
 }
+// Which platform a bundle reports to is baked in, and shipping the wrong one is silent - so check the
+// artifact (it also catches --no-build re-zipping a site built for another platform or App ID).
+const scripts = files.filter((f) => f.endsWith('.js')).map((f) => readFileSync(path.join(SITE, f), 'utf8'));
+const bakedIndie = [...new Set(scripts.flatMap((js) => [...js.matchAll(/\bapp_[0-9a-f]{24}\b/g)].map((m) => m[0])))];
+if (INDIE && !scripts.some((js) => js.includes(INDIE_APP_ID))) fail(`the bundle does not carry the indie.fun App ID ${INDIE_APP_ID} — rebuild without --no-build`);
+if (!INDIE && bakedIndie.length) fail(`the arrr.fun bundle carries an indie.fun App ID (${bakedIndie[0]}) — rebuild without --no-build`);
 
 // ---------------------------------------------------------------------------- zip
 
@@ -183,10 +214,11 @@ const zipped = statSync(ZIP).size;
 const sha256 = createHash('sha256').update(readFileSync(ZIP)).digest('hex');
 const appId = (process.env.VITE_ARRR_APP_ID || '').trim() || DEFAULT_APP_ID;
 
-writeFileSync(path.join(OUT, 'BUILD.txt'), [
-  'Doom Town — web build, generated by `npm run export` (tools/export.mjs). Do not edit.',
+writeFileSync(path.join(OUT, INDIE ? 'BUILD-indiefun.txt' : 'BUILD.txt'), [
+  `Doom Town — ${INDIE ? 'indie.fun' : 'arrr.fun'} web build, generated by \`npm run ${INDIE ? 'export:indiefun' : 'export'}\` (tools/export.mjs). Do not edit.`,
   '',
   `built from commit : ${head}${dirty ? ' (with uncommitted changes)' : ''}   (baked in as the build every other client must match)`,
+  `platform          : ${INDIE ? `indie.fun, SDK on with App ID ${INDIE_APP_ID} (public; src/platform/indie.ts)` : 'arrr.fun, no indie.fun SDK'}`,
   `app               : ${appId}   (rooms joined, and the app players sign in to)`,
   `api key baked in  : ${process.env.VITE_ARRR_API_KEY ? 'yes, from VITE_ARRR_API_KEY (not a secret)' : appId === DEFAULT_APP_ID ? "yes, the doom-town app's (src/menu/rooms.ts; not a secret)" : 'no'}`,
   `site              : ${SLUG}/  ${files.length} files, ${bytes} bytes`,
@@ -197,4 +229,4 @@ writeFileSync(path.join(OUT, 'BUILD.txt'), [
 
 console.log(`\n${path.relative(ROOT, SITE)}/  ${files.length} files, ${mib(bytes)}`);
 console.log(`${path.relative(ROOT, ZIP)}  ${mib(zipped)}  sha256 ${sha256}`);
-console.log(`app ${appId}, build ${head}`);
+console.log(`app ${appId}, build ${head}${INDIE ? `, indie.fun ${INDIE_APP_ID}` : ''}`);

@@ -13,7 +13,9 @@
     "pak": "node tools/build-pak.mjs",
     "export": "node tools/export.mjs",
     "mods": "node tools/mods/pack.mjs",
-    "mod:check": "node tools/mods/check.mjs"
+    "mod:check": "node tools/mods/check.mjs",
+    "export:indiefun": "node tools/export.mjs --platform=indiefun",
+    "deploy:indiefun": "node tools/deploy-indiefun.mjs"
   },
   "dependencies": {
     "arrr-network": "file:vendor/arrr-network-2.3.0.tgz",

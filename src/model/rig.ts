@@ -42,10 +42,10 @@ export const PIVOT = {
   /** centre of the hand: the point the arm IK puts on the gun */
   handR: new THREE.Vector3(-0.5, 24, 13.5),
   handL: new THREE.Vector3(-0.5, 24, -13.5),
-  hipR: new THREE.Vector3(-1, 27.5, 5.6),
-  hipL: new THREE.Vector3(-1, 27.5, -5.6),
-  kneeR: new THREE.Vector3(-1, 15, 5.6),
-  kneeL: new THREE.Vector3(-1, 15, -5.6),
+  hipR: new THREE.Vector3(-1, 27.5, 6.3),
+  hipL: new THREE.Vector3(-1, 27.5, -6.3),
+  kneeR: new THREE.Vector3(-1, 15, 6.3),
+  kneeL: new THREE.Vector3(-1, 15, -6.3),
   /** gun-local (bind at the origin, barrel along +X): where each hand holds it */
   gunGrip: new THREE.Vector3(-1.5, -2.2, 0),
   gunFore: new THREE.Vector3(10.5, -1.2, 0),
@@ -115,11 +115,11 @@ export function defineBoxes(): BoxDef[] {
   add(mirrorZ(handR, 'handL', B.fArmL, all(paint(GLOVE))));
 
   // ---- legs: green thighs, khaki armoured boots up to the knee ---------------
-  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 0.6], max: [5, 28, 10.6], faces: all(suit) });
+  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 1.3], max: [5, 28, 11.3], faces: all(suit) });
   add(mirrorZ(thighR, 'thighL', B.thighL, all(suit)));
-  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 0.4], max: [5, 15.2, 11], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
+  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 1.1], max: [5, 15.2, 11.7], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
   add(mirrorZ(shinR, 'shinL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
-  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 0.9], max: [9, 4.5, 10.5], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
+  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 1.6], max: [9, 4.5, 11.2], faces: { ...all(paint(BOOT)), ny: paint(SOLE) } });
   add(mirrorZ(toeR, 'toeL', B.shinL, { ...all(paint(BOOT)), ny: paint(SOLE) }));
 
   // ---- the gun (gun-local bind: barrel along +X): dark steel, a wood stock and pump ----

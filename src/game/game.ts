@@ -36,7 +36,7 @@ import { APP_ID, API_KEY } from '../menu/rooms.js';
 import { Input, MAX_PITCH } from '../input/input.js';
 import { TicRing } from './ring.js';
 import { Gfx } from '../hud/gfx.js';
-import { Hud, type ScoreRow } from '../hud/hud.js';
+import { Hud, type ModeHud, type ScoreRow } from '../hud/hud.js';
 import { FaceWidget, pointToAngle } from '../hud/face.js';
 import { obituaryTemplate, pickupMessage } from '../hud/strings.js';
 import { botColor, clampColor, PLAYER_COLORS } from './colors.js';
@@ -82,6 +82,20 @@ export interface GameOptions {
 
 /** mobjtype_t of the two bosses (DESIGN.md "Random bosses"). */
 const MT_SPIDER = 19, MT_CYBORG = 21;
+const TEAM_TINT: Record<number, string> = { 0: '#ff5a4a', 1: '#5aa0ff' };
+/** PlayerView word 50: the slot a dead elimination player is watching (-1 none). */
+const PV_SPECTATING = 50;
+/** PlayerView word 49 (war): where a dead player may spawn — bit 0 the base, bit 1+i point i. */
+const PV_RESPAWN_MASK = 49;
+/** "1 BASE", "2 POINT A", ...: the weapon key picks the spawn (DESIGN.md, war). */
+function spawnChoices(mask: number): string[] {
+  const out: string[] = [];
+  for (let bit = 0; bit < 9; bit++) {
+    if (!(mask & (1 << bit))) continue;
+    out.push(`${bit + 1} ${bit === 0 ? 'BASE' : `POINT ${String.fromCharCode(64 + bit)}`}`);
+  }
+  return out;
+}
 export const bossName = (type: number): string => (type === MT_SPIDER ? 'Spider Mastermind' : type === MT_CYBORG ? 'Cyberdemon' : 'demon');
 /** Team colours: indices into PLAYER_COLORS (red, blue). */
 const TEAM_COLOR = [3, 4];
@@ -489,9 +503,67 @@ export class Game {
         this.hud.message('A new match begins. Fight!', '#ffd25a');
         return;
       case EV_MATCH_END:
-        if (a >= 0) this.hud.message(`${this.slotName(a, snap)} wins the match!`, '#ffd25a');
+        if (this.game.mode.teams) this.hud.banner(a === 0 ? 'RED TEAM WINS THE MATCH' : a === 1 ? 'BLUE TEAM WINS THE MATCH' : 'THE MATCH IS A DRAW', TEAM_TINT[a] ?? '#ffd25a', 5000);
+        else if (a >= 0) this.hud.message(`${this.slotName(a, snap)} wins the match!`, '#ffd25a');
+        return;
+      case EV_MAP_CHANGE:
+        this.hud.message(`Now playing ${mapTitle(this.app.sim.mapName(a))}`, '#ffd25a');
+        return;
+      case EV_ROUND_START:
+        this.hud.banner(`ROUND ${a}`, '#ffd25a', 2500);
+        return;
+      case EV_ROUND_END:
+        this.hud.banner(a === 0 ? 'RED WINS THE ROUND' : a === 1 ? 'BLUE WINS THE ROUND' : 'ROUND DRAW', TEAM_TINT[a] ?? '#ffd25a', 3500);
+        return;
+      case EV_POINT_CAPTURED:
+        this.hud.message(`${b === 0 ? 'Red' : 'Blue'} team captured point ${String.fromCharCode(65 + a)}`, TEAM_TINT[b]);
+        return;
+      case EV_TICKETS_LOW:
+        this.hud.message(`${a === 0 ? 'Red' : 'Blue'} team is running out of tickets!`, TEAM_TINT[a]);
+        return;
+      case EV_BOSS_SPAWN:
+        this.hud.banner(`A ${bossName(a).toUpperCase()} HAS ENTERED THE TOWN`, '#ff4b3a', 5000);
+        return;
+      case EV_BOSS_KILLED:
+        this.hud.banner(b >= 0 ? `${this.slotName(b, snap).toUpperCase()} SLEW THE ${bossName(a).toUpperCase()}` : `THE ${bossName(a).toUpperCase()} IS DEAD`, '#ffd25a', 4000);
+        this.hud.message('A BFG 9000 dropped where it fell!', '#7cff6b');
         return;
     }
+  }
+
+  /** The match as the HUD shows it: teams, rounds, tickets, capture points, the boss. */
+  private modeHud(snap: Snap): ModeHud {
+    const m = snap.match, g = this.game;
+    const me = snap.mySlot;
+    const nPoints = Math.max(0, m[MV.points] | 0);
+    const points: ModeHud['points'] = [];
+    for (let i = 0; i < nPoints; i++) {
+      const o = MV.points + 1 + i * POINT_WORDS;
+      points.push({ owner: m[o + 3], progress: m[o + 4] });
+    }
+    const bo = MV.points + 1 + nPoints * POINT_WORDS;
+    const bossId = m.length > bo ? m[bo] : 0;
+    const boss = bossId > 0 ? { name: bossName(m[bo + 1]), health: Math.max(0, m[bo + 2]), max: Math.max(1, m[bo + 3]) } : null;
+    const phase = m[MV.phase];
+    const w = m[MV.winner];
+    let winner: string | null = null;
+    if (phase === PHASE_INTERMISSION && w >= 0) {
+      winner = g.mode.teams ? `${w === 0 ? 'RED' : 'BLUE'} TEAM WINS` : `${this.slotName(w, snap).toUpperCase()} WINS`;
+    }
+    const spec = snap.me ? snap.me[PV_SPECTATING] : -1;
+    return {
+      mode: m[MV.mode], label: g.label, teams: g.mode.teams, phase,
+      phaseLeft: Math.max(0, m[MV.phaseLeft]) / TICRATE,
+      round: m[MV.round],
+      score: [m[MV.scoreRed], m[MV.scoreBlue]],
+      alive: [m[MV.aliveRed], m[MV.aliveBlue]],
+      myTeam: me >= 0 ? snap.rows[me * ROW_WORDS + R_TEAM] : -1,
+      points, boss, winner,
+      mapTitle: mapTitle(this.app.sim.mapName(m[MV.map])),
+      nextMapTitle: mapTitle(this.app.sim.mapName(m[MV.nextMap])),
+      spectating: spec >= 0 && spec !== me ? this.slotName(spec, snap) : null,
+      spawnChoices: m[MV.mode] === 3 && snap.me ? spawnChoices(snap.me[PV_RESPAWN_MASK]) : null,
+    };
   }
 
   private onAppMessage(player: string | null, data: unknown): void {
@@ -753,6 +825,7 @@ export class Game {
       locked: this.input.locked || this.pause.open,
       style: prefs().hud,
       net: st === 'Connected' || st === 'Offline' ? null : st,
+      mode: this.modeHud(snap),
     }, now);
     if (!dead) this.killer = null;
     void R_HUMAN;

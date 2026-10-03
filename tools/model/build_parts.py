@@ -170,8 +170,8 @@ def build(part):
         bevel(bm, pv, 0.5, 1)
     elif n == 'torso':
         # V chest: narrow at the waist, broad and squared at the shoulders
-        loft(bm, mn, mx, profile=((0, 0.8), (0.3, 0.86), (0.75, 0.97), (0.92, 0.97), (1, 0.84)))
-        for z in (-3.7, 3.7):                                           # chest plates
+        loft(bm, mn, mx, profile=((0, 0.76), (0.3, 0.84), (0.72, 0.98), (0.93, 0.98), (1, 0.9)))
+        for z in (-3.9, 3.9):                                           # chest plates
             pv = box(bm, [mx[0] - 1.6, 37.5, z - 3.4], [mx[0] + 0.1, 45.4, z + 3.4])
             bevel(bm, pv, 0.5, 1)
         pv = box(bm, [mn[0] - 0.3, 36.0, -5.6], [mn[0] + 1.6, 45.6, 5.6])   # back plate

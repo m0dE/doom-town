@@ -446,7 +446,7 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   modelled in Blender (`tools/model/build_parts.py`, runs headless with the `bpy` module)
   — faceted helmet with a wrap-around visor, V chest with plates, domed sleeves, 8-sided
   limbs, boots with a knee cuff and sole, a pump shotgun; legs half his height, shoulders
-  at ±10.5, feet apart; faces painted flat
+  at ±10.5, hips ±7.6 inside the chest (±9), feet apart; faces painted flat
   palette colours in blocky shade noise (`PaintSpec`, rig.ts) — tan helmet, dark visor,
   green suit (kept in the green ramp so player colours apply), bare arms, dark gloves,
   khaki boots, dark gun with wood.

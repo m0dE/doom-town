@@ -42,10 +42,10 @@ export const PIVOT = {
   /** centre of the hand: the point the arm IK puts on the gun */
   handR: new THREE.Vector3(-0.5, 24, 10.5),
   handL: new THREE.Vector3(-0.5, 24, -10.5),
-  hipR: new THREE.Vector3(-0.5, 27.5, 6),
-  hipL: new THREE.Vector3(-0.5, 27.5, -6),
-  kneeR: new THREE.Vector3(-0.5, 16, 6),
-  kneeL: new THREE.Vector3(-0.5, 16, -6),
+  hipR: new THREE.Vector3(-0.5, 27.5, 4.8),
+  hipL: new THREE.Vector3(-0.5, 27.5, -4.8),
+  kneeR: new THREE.Vector3(-0.5, 16, 4.8),
+  kneeL: new THREE.Vector3(-0.5, 16, -4.8),
   /** gun-local (bind at the origin, barrel along +X): where each hand holds it */
   gunGrip: new THREE.Vector3(-1.5, -2.2, 0),
   gunFore: new THREE.Vector3(10.5, -1.4, 0),
@@ -93,11 +93,11 @@ export function defineBoxes(): BoxDef[] {
   const suit = paint(SUIT, true);
 
   // ---- trunk -------------------------------------------------------------
-  add({ name: 'pelvis', bone: B.pelvis, min: [-6.5, 26.5, -8.6], max: [5, 30, 8.6], faces: all(suit) });
-  add({ name: 'belt', bone: B.pelvis, min: [-7, 29.6, -8.8], max: [6, 33.2, 8.8], faces: all(paint(BELT)) });
-  add({ name: 'pouchF', bone: B.pelvis, min: [5.4, 29.8, -6.6], max: [7.4, 33, 6.6], faces: all(paint(POUCH)) });
-  add({ name: 'pouchB', bone: B.pelvis, min: [-9, 29.4, -4.2], max: [-6.6, 33.4, 4.2], faces: all(paint(POUCH)) });
-  add({ name: 'torso', bone: B.torso, min: [-6, 33, -8.4], max: [6.6, 46.8, 8.4], faces: all(suit) });
+  add({ name: 'pelvis', bone: B.pelvis, min: [-5.6, 26.5, -7.6], max: [4.6, 30, 7.6], faces: all(suit) });
+  add({ name: 'belt', bone: B.pelvis, min: [-6.4, 29.6, -7.9], max: [5.6, 33.2, 7.9], faces: all(paint(BELT)) });
+  add({ name: 'pouchF', bone: B.pelvis, min: [5, 29.8, -6], max: [7, 33, 6], faces: all(paint(POUCH)) });
+  add({ name: 'pouchB', bone: B.pelvis, min: [-8.4, 29.4, -4], max: [-6, 33.4, 4], faces: all(paint(POUCH)) });
+  add({ name: 'torso', bone: B.torso, min: [-6, 33, -9], max: [6.6, 46.8, 9], faces: all(suit) });
 
   // ---- head: a faceted tan helmet, a wide dark visor -------------------------
   add({ name: 'helmet', bone: B.head, min: [-5, 45.6, -6.2], max: [6.6, 56, 6.2], faces: all(paint(TAN)) });
@@ -117,13 +117,13 @@ export function defineBoxes(): BoxDef[] {
   add(mirrorZ(handR, 'handL', B.fArmL, all(paint(GLOVE))));
 
   // ---- legs: thick green thighs, chunky khaki boots up to the knee ------------------
-  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-5.4, 16, 1], max: [5, 29, 11], faces: all(suit) });
+  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-4.6, 16, 1.1], max: [4.4, 29, 8.5], faces: all(suit) });
   add(mirrorZ(thighR, 'thighL', B.thighL, all(suit)));
-  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-5.6, 1, 1.6], max: [5.2, 19, 10.6], faces: all(paint(BOOT)) });
+  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-5, 1, 1.3], max: [4.8, 19, 8.3], faces: all(paint(BOOT)) });
   add(mirrorZ(shinR, 'shinL', B.shinL, all(paint(BOOT))));
-  const toeR = add({ name: 'toeR', bone: B.shinR, min: [4, 1, 2.2], max: [8.8, 5, 10.2], faces: all(paint(BOOT)) });
+  const toeR = add({ name: 'toeR', bone: B.shinR, min: [3.8, 1, 1.7], max: [8.4, 4.8, 7.9], faces: all(paint(BOOT)) });
   add(mirrorZ(toeR, 'toeL', B.shinL, all(paint(BOOT))));
-  const soleR = add({ name: 'soleR', bone: B.shinR, min: [-6, 0, 1.5], max: [9.2, 1.4, 10.9], faces: all(paint(SOLE)) });
+  const soleR = add({ name: 'soleR', bone: B.shinR, min: [-5.4, 0, 1.1], max: [8.8, 1.2, 8.5], faces: all(paint(SOLE)) });
   add(mirrorZ(soleR, 'soleL', B.shinL, all(paint(SOLE))));
 
   // ---- the shotgun (gun-local bind: barrel along +X): wood stock and pump, dark steel ----

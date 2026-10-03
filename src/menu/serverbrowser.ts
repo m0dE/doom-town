@@ -9,16 +9,18 @@ import { REGIONS, homeRegion, regionOf, type RegionId } from './regions.js';
 import { MODES, type ModeKey } from './modes.js';
 import { mapTitle } from '../sim/maps.js';
 
-/** The list's tabs: one per mode, and the random-boss rooms on their own. */
-type Tab = ModeKey | 'boss';
+/** The list's tabs: every room, one per mode, and the random-boss rooms on their own. */
+type Tab = 'all' | ModeKey | 'boss';
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'all', label: 'All' },
   { id: 'dm', label: MODES.dm.label },
-  { id: 'tdm', label: MODES.tdm.label },
+  { id: 'tdm', label: 'Team DM' },
   { id: 'elim', label: MODES.elim.label },
-  { id: 'war', label: 'War 100 v 100' },
-  { id: 'boss', label: 'Random bosses' },
+  { id: 'war', label: 'War' },
+  { id: 'boss', label: 'Bosses' },
 ];
 const tabOf = (r: RoomRow): Tab => (r.game.bosses ? 'boss' : r.game.mode.key);
+const inTab = (r: RoomRow, t: Tab): boolean => t === 'all' || tabOf(r) === t;
 
 const REFRESH_SECONDS = 20;
 
@@ -32,7 +34,7 @@ export class ServerBrowser {
   private busy = false;
   readonly home: RegionId = homeRegion();
 
-  private tab: Tab = 'dm';
+  private tab: Tab = 'all';
 
   constructor(
     private readonly list: HTMLElement,
@@ -91,11 +93,11 @@ export class ServerBrowser {
   private render(): void {
     if (this.tabs) {
       this.tabs.innerHTML = TABS.map((t) => {
-        const n = this.rows.filter((r) => tabOf(r) === t.id).reduce((a, r) => a + r.players, 0);
+        const n = this.rows.filter((r) => inTab(r, t.id)).reduce((a, r) => a + r.players, 0);
         return `<button type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === this.tab}">${esc(t.label)}<small>${n}</small></button>`;
       }).join('');
     }
-    const mine = this.rows.filter((r) => tabOf(r) === this.tab);
+    const mine = this.rows.filter((r) => inTab(r, this.tab));
     const order = [this.home, ...REGIONS.map((r) => r.id).filter((id) => id !== this.home)];
     const groups = order.map((id) => ({ title: regionOf(id).label, mine: id === this.home, rows: mine.filter((r) => r.region === id) }));
     groups.push({ title: 'Player rooms', mine: false, rows: mine.filter((r) => !r.region) });
@@ -108,7 +110,7 @@ export class ServerBrowser {
     const fill = Math.round((r.players / r.capacity) * 100);
     return `
       <div class="srv-row" data-room="${esc(r.name)}" tabindex="0" role="button" aria-label="Join ${esc(r.name)}">
-        <span class="srv-name">${esc(r.name)}${r.game.bosses ? ' <em class="badge boss">Random bosses</em>' : ''}${r.game.mode.key !== 'dm' && this.tab === 'boss' ? ` <em class="badge">${esc(r.game.mode.short)}</em>` : ''}</span>
+        <span class="srv-name">${esc(r.name)}${r.game.bosses ? ' <em class="badge boss">Bosses</em>' : ''}${r.game.mode.key !== 'dm' && (this.tab === 'boss' || this.tab === 'all') ? ` <em class="badge">${esc(r.game.mode.short)}</em>` : ''}</span>
         <span class="srv-map">${esc(mapTitle(r.map))}</span>
         <span class="srv-pop"><i style="--fill:${fill}%"></i><b>${r.players}</b> / ${r.capacity}</span>
         <span class="srv-age">${esc(formatAge(r.ageSeconds))}</span>

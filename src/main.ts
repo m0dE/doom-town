@@ -134,11 +134,8 @@ account.start();
 
 const browser = new ServerBrowser($('rooms'), $('rooms-status'), $<HTMLButtonElement>('quickplay'), central, $('mode-tabs'));
 browser.onJoin = (room) => void play(room, false);
-const offlineMode = $<HTMLSelectElement>('offline-mode');
-$('offline').addEventListener('click', () => {
-  const kind = offlineMode.value;
-  void play(kind ? `practice-${kind}` : 'practice', true);
-});
+// Practice against bots has no button (?offline=1 is the way in); tests start it from the warm menu.
+(window as unknown as { __practice?: () => void }).__practice = () => void play('practice', true);
 $<HTMLFormElement>('custom').addEventListener('submit', (e) => {
   e.preventDefault();
   const room = cleanRoomName(roomIn.value);

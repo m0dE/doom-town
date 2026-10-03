@@ -387,6 +387,7 @@ ${COMMON}
 uniform sampler2D uSpriteAtlas;
 uniform float uPspLevel;     // colormap row for the weapon (sector light), -1 = fuzz
 uniform vec3 uPspLight;      // dynamic light at the camera
+uniform float uPspGlow;      // bloom feed of the fullbright weapon flash (a screen-filling sprite: keep it modest)
 uniform float uTime;
 in vec2 vUV;
 flat in vec4 vRect;
@@ -407,7 +408,9 @@ void main() {
   float level = uFixedCmap >= 0.0 ? uFixedCmap : (full ? 0.0 : uPspLevel);
   vec3 c = palColor(idx, level);
   vec3 alb = palColor(idx, albedoLevel());
-  float emis = full && uFixedCmap < 0.0 ? smoothstep(0.15, 0.6, luma(alb)) : 0.0;
+  // only the hottest pixels of the flash feed the bloom, and weakly: Doom's flash is a
+  // flat bright sprite, the glow should rim it, not swallow the gun in an orb
+  float emis = full && uFixedCmap < 0.0 ? smoothstep(0.55, 0.95, luma(alb)) * uPspGlow : 0.0;
   fragColor = vec4(c + (full ? vec3(0.0) : alb * uPspLight), emis);
 }
 `;

@@ -114,7 +114,9 @@ export interface RenderFrame {
 export interface PlayerBodyRenderer {
   /**
    * Called once per frame with the player-body mobjs that the sprite path skipped
-   * (`bodies[0..count)`), before the scene is drawn. `lightOf(m)` returns the Doom
+   * (`bodies[0..count)`), before the scene is drawn: every PLAY-sprite mobj except
+   * the camera's own body - live players (slot >= 0), their corpses (slot -1) and
+   * invisible ones (MF_SHADOW; the hook draws the fuzz). `lightOf(m)` returns the Doom
    * light level (0..255, specials applied) of the sector the body stands in. Objects
    * added to `scene` are drawn with the world (scene is Z-up, Doom map units).
    */
@@ -125,6 +127,18 @@ export interface PlayerBodyContext {
   scene: import('three').Scene;
   camera: import('three').PerspectiveCamera;
   lightOf(m: RenderMobj): number;
+  /** floor height under the body (map units, moving floors included) */
+  floorOf(m: RenderMobj): number;
+  /** dynamic light (linear RGB, renderer gain applied) at map point x, y, z for a body in `m`'s sector */
+  dynLightAt(m: RenderMobj, z: number, out: import('three').Vector3): import('three').Vector3;
   extralight: number;
   tic: number;
+  /** seconds, monotonic (animation clock) */
+  time: number;
+  /** the renderer's palette texture: 256 × (14 palettes · 34 COLORMAP rows), linear RGB */
+  palette: import('three').Texture;
+  /** current screen palette (damage/pickup/radsuit tint), 0..13 */
+  palNum: number;
+  /** fixed colormap row (light amp 1 → fullbright, 32 invulnerability), -1 = none */
+  fixedColormap: number;
 }

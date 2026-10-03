@@ -253,7 +253,7 @@ impl World {
         crate::SIM_VERSION.put(&mut w);
         // config and the map rotation, by name + content hash
         let c = &self.g.cfg;
-        for x in [c.mode, c.slots, c.match_tics, c.inter_tics, c.round_tics, c.freeze_tics, c.rounds_to_win, c.tickets, c.friendly_fire as u32] {
+        for x in [c.mode, c.slots, c.match_tics, c.inter_tics, c.round_tics, c.freeze_tics, c.rounds_to_win, c.tickets, c.friendly_fire as u32, c.flags] {
             x.put(&mut w);
         }
         (self.g.maps.len() as u32).put(&mut w);
@@ -274,6 +274,11 @@ impl World {
         self.g.points.put(&mut w);
         self.g.low_sent.put(&mut w);
         self.g.pending.put(&mut w);
+        self.g.boss.put(&mut w);
+        self.g.boss_max.put(&mut w);
+        self.g.boss_timer.put(&mut w);
+        self.g.boss_drop.put(&mut w);
+        self.g.boss_tries.put(&mut w);
         self.tic.put(&mut w);
         self.leveltime.put(&mut w);
         self.rng.put(&mut w);
@@ -322,11 +327,11 @@ impl World {
         if u32::get(&mut r)? != FORMAT_VERSION || u32::get(&mut r)? != crate::SIM_VERSION {
             return None;
         }
-        let mut cw = [0u32; 9];
+        let mut cw = [0u32; 10];
         for x in cw.iter_mut() {
             *x = u32::get(&mut r)?;
         }
-        let cfg = Config { mode: cw[0], slots: cw[1], match_tics: cw[2], inter_tics: cw[3], round_tics: cw[4], freeze_tics: cw[5], rounds_to_win: cw[6], tickets: cw[7], friendly_fire: cw[8] != 0 };
+        let cfg = Config { mode: cw[0], slots: cw[1], match_tics: cw[2], inter_tics: cw[3], round_tics: cw[4], freeze_tics: cw[5], rounds_to_win: cw[6], tickets: cw[7], friendly_fire: cw[8] != 0, flags: cw[9] };
         if cfg.clone().with_defaults() != cfg {
             return None;
         }
@@ -357,6 +362,11 @@ impl World {
         g.points = Ser::get(&mut r)?;
         g.low_sent = Ser::get(&mut r)?;
         g.pending = Ser::get(&mut r)?;
+        g.boss = Ser::get(&mut r)?;
+        g.boss_max = Ser::get(&mut r)?;
+        g.boss_timer = Ser::get(&mut r)?;
+        g.boss_drop = Ser::get(&mut r)?;
+        g.boss_tries = Ser::get(&mut r)?;
         let map = g.maps[g.map_index as usize].clone();
         if g.phase > crate::game::PH_INTER || (cfg_mode_war(&g) && g.points.len() != map.cap_points.len()) || (!cfg_mode_war(&g) && !g.points.is_empty()) {
             return None;

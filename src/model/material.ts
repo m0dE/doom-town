@@ -34,6 +34,19 @@ export interface DoomguyUniforms {
   uGore: { value: number };
   uGoreSeed: { value: number };
   uFlashBoost: { value: number };
+  /** the world renderer's palette (256 × 14·34 linear RGB, COLORMAP rows folded in); used when uPalNum >= 0 */
+  uWorldPal: { value: THREE.Texture | null };
+  /** world palette number (damage/pickup tints), -1 = the model's own palette and colormap */
+  uPalNum: { value: number };
+  /** fixed colormap row (light amp, invulnerability), -1 = none */
+  uFixedCmap: { value: number };
+  /** dynamic light reaching the model (linear RGB, added as albedo × light) */
+  uDyn: { value: THREE.Vector3 };
+  /** 1 = alpha carries the emissive amount (the world's bloom), 0 = opaque alpha (start screen) */
+  uEmisAlpha: { value: number };
+  /** 1 = spectre fuzz (drawn with multiply blending) */
+  uFuzz: { value: number };
+  uTime: { value: number };
 }
 
 export function makeIndexTexture(data: Uint8Array, w: number, h: number): THREE.DataTexture {
@@ -73,7 +86,16 @@ uniform float uFullbright;
 uniform float uGore;
 uniform float uGoreSeed;
 uniform float uFlashBoost;
+uniform sampler2D uWorldPal;
+uniform float uPalNum;
+uniform float uFixedCmap;
+uniform vec3 uDyn;
+uniform float uEmisAlpha;
+uniform float uFuzz;
+uniform float uTime;
 varying vec2 vPalUv;
+varying vec3 vObjPos;
+varying vec3 vObjNormal;
 varying float vBright;
 varying float vDepth;
 
@@ -96,6 +118,13 @@ export function createDoomguyMaterial(tex: SharedTextures): { material: THREE.Me
     uGore: { value: 0 },
     uGoreSeed: { value: 0 },
     uFlashBoost: { value: 1 },
+    uWorldPal: { value: null },
+    uPalNum: { value: -1 },
+    uFixedCmap: { value: -1 },
+    uDyn: { value: new THREE.Vector3() },
+    uEmisAlpha: { value: 0 },
+    uFuzz: { value: 0 },
+    uTime: { value: 0 },
   };
   const material = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
   material.onBeforeCompile = (shader) => {
@@ -110,11 +139,15 @@ export function createDoomguyMaterial(tex: SharedTextures): { material: THREE.Me
 attribute float aBright;
 varying vec2 vPalUv;
 varying float vBright;
-varying float vDepth;`)
+varying float vDepth;
+varying vec3 vObjPos;
+varying vec3 vObjNormal;`)
       .replace('#include <uv_vertex>', `#include <uv_vertex>
 vPalUv = uv; vBright = aBright;`)
       .replace('#include <project_vertex>', `#include <project_vertex>
-vDepth = -mvPosition.z;`);
+vDepth = -mvPosition.z;
+vObjPos = transformed;
+vObjNormal = objectNormal;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 ${PARS}`)
@@ -140,16 +173,50 @@ vec3 fn = normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition)));
 float contrast = floor((1.0 - dot(fn, normalize(vec3(-0.35, 0.75, 0.55)))) * 2.6);
 float bright = max(uFullbright, vBright);
 float row = bright > 0.5 ? 0.0 : clamp(floor(level) + contrast, 0.0, 31.0);
-int doomIdx = palAt(uColormap, tidx, int(row));
-vec3 doomRgb = texelFetch(uPalette, ivec2(doomIdx, 0), 0).rgb;
-vec3 albedo = texelFetch(uPalette, ivec2(tidx, 0), 0).rgb;
+vec3 doomRgb, albedo;
+if (uPalNum >= 0.0) {
+  // the world renderer's palette: same tints (damage, pickups) and fixed colormaps as the sprites
+  int pr = int(uPalNum + 0.5) * 34;
+  float wrow = uFixedCmap >= 0.0 ? uFixedCmap : row;
+  doomRgb = texelFetch(uWorldPal, ivec2(tidx, pr + int(wrow)), 0).rgb;
+  albedo = texelFetch(uWorldPal, ivec2(tidx, pr + (uFixedCmap >= 0.0 ? int(uFixedCmap) : 0)), 0).rgb;
+  if (bright < 0.5 && uFixedCmap < 0.0) doomRgb += albedo * uDyn;
+} else {
+  int doomIdx = palAt(uColormap, tidx, int(row));
+  doomRgb = texelFetch(uPalette, ivec2(doomIdx, 0), 0).rgb;
+  albedo = texelFetch(uPalette, ivec2(tidx, 0), 0).rgb;
+}
 diffuseColor.rgb = albedo;
+// emissive amount for the world's bloom: only the muzzle flash glows
+float emis = vBright * smoothstep(0.15, 0.6, dot(albedo, vec3(0.2126, 0.7152, 0.0722)));
 `)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+// No shadow maps: a face turned toward the body's mid-plane from an arm or a shoulder
+// pad (the inside of the arm, seen through the gap beside the torso once the arm swings
+// to the gun) would catch a back or rim light at full strength, a bright sliver where
+// the torso should shade it. Those faces get the ambient only.
+{
+  float side = abs(vObjPos.z);
+  float inward = -normalize(vObjNormal).z * sign(vObjPos.z);
+  float occ = smoothstep(0.15, 0.5, inward) * smoothstep(5.0, 8.0, side) * (1.0 - vBright);
+  reflectedLight.directDiffuse *= 1.0 - occ;
+  reflectedLight.indirectDiffuse *= 1.0 - 0.35 * occ;
+}`)
       .replace('#include <opaque_fragment>', `
 outgoingLight += albedo * vBright * uFlashBoost;
 outgoingLight = mix(doomRgb, outgoingLight, uLit);
-#include <opaque_fragment>`);
+#include <opaque_fragment>
+// (after opaque_fragment, which forces alpha to 1 on opaque materials)
+gl_FragColor.a = mix(1.0, emis, uEmisAlpha);
+if (uFuzz > 0.5) {
+  // Doom's spectre fuzz, as the sprites do it: darken what is behind by a jittering
+  // amount, per-column streaks re-rolled every tic (multiply blending)
+  float tic = mod(floor(uTime * 35.0), 256.0);
+  vec2 cell = floor(gl_FragCoord.xy / vec2(2.0, 3.0));
+  float fz = hash12(cell + vec2(tic * 3.0, tic * 7.0));
+  gl_FragColor = vec4(vec3(fz < 0.35 ? 0.18 : (fz < 0.7 ? 0.45 : 0.78)), 1.0);
+}`);
   };
-  material.customProgramCacheKey = () => 'doomguy-v1';
+  material.customProgramCacheKey = () => 'doomguy-v2';
   return { material, uniforms };
 }

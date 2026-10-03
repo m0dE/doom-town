@@ -28,6 +28,9 @@ pub const BLEED_TICS: u32 = 35 * 5;
 /// capture progress runs -CAP_FULL (red) .. +CAP_FULL (blue): 10 s for one capper
 pub const CAP_FULL: i32 = 35 * 10;
 pub const TICKETS_LOW: i32 = 100;
+pub const BOSS_FIRST_TICS: i32 = 35 * 60;
+pub const BOSS_NEXT_TICS: i32 = 35 * 90;
+pub const BOSS_FRAGS: i32 = 5;
 
 const PEND_MATCH: u8 = 1;
 const PEND_ROUND: u8 = 2;
@@ -43,14 +46,16 @@ pub struct Config {
     pub rounds_to_win: u32,
     pub tickets: u32,
     pub friendly_fire: bool,
+    /// bit 0: random bosses (FFA and TDM only)
+    pub flags: u32,
 }
 
 impl Config {
     pub fn ffa(slots: u32) -> Config {
-        Config { mode: MODE_FFA, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false }.with_defaults()
+        Config { mode: MODE_FFA, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0 }.with_defaults()
     }
     pub fn mode(mode: u32, slots: u32) -> Config {
-        Config { mode, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false }.with_defaults()
+        Config { mode, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0 }.with_defaults()
     }
     /// fill zero timing fields with the mode's defaults
     pub fn with_defaults(mut self) -> Config {
@@ -79,6 +84,9 @@ impl Config {
     pub fn teams(&self) -> bool {
         self.mode != MODE_FFA
     }
+    pub fn bosses(&self) -> bool {
+        self.flags & 1 != 0 && (self.mode == MODE_FFA || self.mode == MODE_TDM)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,11 +114,18 @@ pub struct Game {
     pub points: Vec<CapPoint>,
     pub low_sent: [bool; 2],
     pub pending: u8,
+    pub boss: MRef,
+    pub boss_max: i32,
+    /// tics until the next boss, -1 none scheduled
+    pub boss_timer: i32,
+    pub boss_drop: MRef,
+    /// failed boss placements in a row (after 5 the 1024-unit rule relaxes)
+    pub boss_tries: i32,
 }
 
 impl Game {
     pub fn new(cfg: Config, maps: Vec<Rc<Map>>) -> Game {
-        Game { cfg, maps, map_index: 0, match_index: 0, phase: PH_PLAY, phase_left: 0, match_tic: 0, team_score: [0; 2], round: 0, winner: -1, points: Vec::new(), low_sent: [false; 2], pending: 0 }
+        Game { cfg, maps, map_index: 0, match_index: 0, phase: PH_PLAY, phase_left: 0, match_tic: 0, team_score: [0; 2], round: 0, winner: -1, points: Vec::new(), low_sent: [false; 2], pending: 0, boss: MRef::NULL, boss_max: 0, boss_timer: -1, boss_drop: MRef::NULL, boss_tries: 0 }
     }
 }
 
@@ -151,7 +166,11 @@ impl World {
                 p.fresh = true;
                 p.playerstate = PST_REBORN;
             }
+            self.remove_live_boss();
         }
+        self.g.boss = MRef::NULL;
+        self.g.boss_drop = MRef::NULL;
+        self.g.boss_timer = if self.g.cfg.bosses() { BOSS_FIRST_TICS } else { -1 };
         for p in self.players.iter_mut() {
             p.frags = 0;
             p.deaths = 0;
@@ -184,6 +203,8 @@ impl World {
     }
 
     fn end_match(&mut self, winner: i32) {
+        self.remove_live_boss();
+        self.g.boss_timer = -1;
         let score = if self.g.cfg.teams() {
             if winner >= 0 {
                 self.g.team_score[winner as usize]
@@ -247,6 +268,7 @@ impl World {
     pub fn mode_tick(&mut self) {
         match self.mode() {
             MODE_FFA | MODE_TDM => {
+                self.boss_tick();
                 self.g.match_tic += 1;
                 self.g.phase_left = self.g.phase_left.saturating_sub(1);
                 if self.g.phase_left == 0 {
@@ -502,5 +524,160 @@ impl World {
             return -1;
         }
         list[(p.spec_cycle.max(0) as usize) % list.len()] as i32
+    }
+}
+
+impl World {
+    fn remove_live_boss(&mut self) {
+        if let Some(b) = self.deref(self.g.boss) {
+            if self.mo(b).health > 0 {
+                let (x, y, z) = {
+                    let m = self.mo(b);
+                    (m.x, m.y, m.z)
+                };
+                let fog = self.spawn_mobj(x, y, z, mt::TFOG);
+                self.start_sound(fog, sfx::telept);
+                self.remove_mobj(b);
+            }
+        }
+        self.g.boss = MRef::NULL;
+    }
+
+    fn boss_tick(&mut self) {
+        if self.g.boss_timer < 0 || self.g.phase != PH_PLAY {
+            return;
+        }
+        self.g.boss_timer -= 1;
+        if self.g.boss_timer > 0 {
+            return;
+        }
+        let first = if self.p_random() & 1 != 0 { mt::SPIDER } else { mt::CYBORG };
+        let other = if first == mt::SPIDER { mt::CYBORG } else { mt::SPIDER };
+        let relaxed = self.g.boss_tries >= 5;
+        if !self.try_spawn_boss(first, relaxed) && !self.try_spawn_boss(other, relaxed) {
+            self.g.boss_timer = 35; // try again in a second
+            self.g.boss_tries += 1;
+        } else {
+            self.g.boss_tries = 0;
+        }
+    }
+
+    /// a boss at a spawn spot that fits it and is >= 1024 units from every live player
+    /// `relaxed`: crowded map, no spot 1024 units clear of everyone: take the spot that is
+    /// farthest from the nearest player instead
+    fn try_spawn_boss(&mut self, t: usize, relaxed: bool) -> bool {
+        let map = self.map.clone();
+        let n = map.spawn_spots.len();
+        if n == 0 {
+            return false;
+        }
+        let inf = info(t);
+        let live: Vec<(i64, i64)> = self
+            .players
+            .iter()
+            .filter(|p| p.playerstate == PST_LIVE)
+            .filter_map(|p| self.deref(p.mo))
+            .map(|h| {
+                let m = self.mo(h);
+                ((m.x >> FRACBITS) as i64, (m.y >> FRACBITS) as i64)
+            })
+            .collect();
+        let start = (((self.p_random() << 8) | self.p_random()) as usize) % n;
+        let mut order: Vec<usize> = (0..n).map(|k| (start + k) % n).collect();
+        let near2 = |sx: i64, sy: i64| live.iter().map(|&(x, y)| (x - sx) * (x - sx) + (y - sy) * (y - sy)).min().unwrap_or(i64::MAX);
+        if relaxed {
+            // farthest from everyone first (stable: ties keep the random rotation)
+            order.sort_by_key(|&i| std::cmp::Reverse(near2(map.spawn_spots[i].x as i64, map.spawn_spots[i].y as i64)));
+        }
+        for i in order {
+            let sp = map.spawn_spots[i];
+            let (sx, sy) = (sp.x as i64, sp.y as i64);
+            if !relaxed && near2(sx, sy) < 1024 * 1024 {
+                continue;
+            }
+            let (fx, fy) = ((sp.x as i32) << FRACBITS, (sp.y as i32) << FRACBITS);
+            let sec = map.sector_at(fx, fy);
+            if self.sectors[sec].ceilingheight - self.sectors[sec].floorheight < inf.height {
+                continue;
+            }
+            if !crate::bots::nav::static_clear(&map, fx, fy, inf.radius, false) || !self.spot_clear(fx, fy, inf.radius) {
+                continue;
+            }
+            let h = self.spawn_mobj(fx, fy, ONFLOORZ, t);
+            let mult = (16 + live.len() as i32).min(16 * 3);
+            let health = inf.spawnhealth * mult / 16;
+            {
+                let m = self.mo_mut(h);
+                m.health = health;
+                m.angle = ANG45.wrapping_mul((sp.angle as i32 / 45) as u32);
+            }
+            // hunt the nearest player straight away
+            let mut best: Option<(i64, u32)> = None;
+            for p in &self.players {
+                if p.playerstate != PST_LIVE {
+                    continue;
+                }
+                if let Some(ph) = self.deref(p.mo) {
+                    let m = self.mo(ph);
+                    let d = (((m.x >> FRACBITS) as i64) - sx).pow(2) + (((m.y >> FRACBITS) as i64) - sy).pow(2);
+                    if best.is_none_or(|(bd, _)| d < bd) {
+                        best = Some((d, ph));
+                    }
+                }
+            }
+            if let Some((_, ph)) = best {
+                let r = self.mref(ph);
+                self.mo_mut(h).target = r;
+                self.set_mobj_state(h, inf.seestate);
+            }
+            let z = self.mo(h).z;
+            self.start_sound_at(fx, fy, z, inf.seesound);
+            let fog = self.spawn_mobj(fx, fy, z, mt::TFOG);
+            self.start_sound(fog, sfx::telept);
+            self.emit(14, t as i32, 0, 0, fx, fy, z, 0);
+            self.g.boss = self.mref(h);
+            self.g.boss_max = health;
+            self.g.boss_timer = -1;
+            return true;
+        }
+        false
+    }
+
+    /// P_KillMobj on a boss: BFG + cell pack drop, +5 frags, next boss in 90 s
+    pub fn boss_killed(&mut self, h: u32, killer: Option<usize>) {
+        let (x, y, t) = {
+            let m = self.mo(h);
+            (m.x, m.y, m.type_ as i32)
+        };
+        self.emit(15, t, killer.map(|k| k as i32).unwrap_or(-1), 0, x, y, 0, 0);
+        if let Some(k) = killer {
+            self.players[k].frags += BOSS_FRAGS;
+            if self.mode() == MODE_TDM {
+                let tm = self.team_of(k) as usize;
+                self.g.team_score[tm] += BOSS_FRAGS;
+            }
+        }
+        let bfg = self.spawn_mobj(x, y, ONFLOORZ, mt::MISC25);
+        self.mo_mut(bfg).flags |= MF_DROPPED;
+        let cells = self.spawn_mobj(x + 24 * FRACUNIT, y, ONFLOORZ, mt::MISC21);
+        self.mo_mut(cells).flags |= MF_DROPPED;
+        self.g.boss_drop = self.mref(bfg);
+        if self.deref(self.g.boss) == Some(h) {
+            self.g.boss = MRef::NULL;
+            if self.g.cfg.bosses() && self.g.phase == PH_PLAY {
+                self.g.boss_timer = BOSS_NEXT_TICS;
+            }
+        }
+    }
+
+    /// world_view_match boss words: id, type, health, max health, tics until next
+    pub fn boss_view(&self) -> [i32; 5] {
+        match self.deref(self.g.boss) {
+            Some(b) => {
+                let m = self.mo(b);
+                [m.id as i32, m.type_ as i32, m.health.max(0), self.g.boss_max, -1]
+            }
+            None => [0, 0, 0, 0, self.g.boss_timer],
+        }
     }
 }

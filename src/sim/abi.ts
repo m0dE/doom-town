@@ -20,7 +20,10 @@ export interface DoomSimExports {
   world_clone(h: number): number;
   world_serialize(h: number): number;
   world_buf_ptr(): number;
-  world_deserialize(map: number, ptr: number, len: number): number;
+  /** v2: the snapshot records its map */
+  world_deserialize(ptr: number, len: number): number;
+  /** v2: the old form, map given (a snapshot from before maps were recorded) */
+  world_deserialize_map?(map: number, ptr: number, len: number): number;
   world_hash(h: number): number;
   world_tic(h: number): number;
   world_human_join(h: number, slot: number): void;
@@ -52,12 +55,13 @@ export const PV = {
   frags: 33, deaths: 34, attacker: 35,
   psWeapon: 36, psWeaponSx: 37, psWeaponSy: 38, psFlash: 39, psFlashSx: 40, psFlashSy: 41,
   isHuman: 42, respawnReady: 43, matchTic: 44, matchPhase: 45, onground: 46, refire: 47,
+  team: 48, respawnMask: 49, spectating: 50,
 } as const;
-export const PLAYER_WORDS = 48;
+export const PLAYER_WORDS = 51;
 
-/** PlayerRow: 8 i32 per slot. */
-export const ROW_WORDS = 8;
-export const R_SLOT = 0, R_HUMAN = 1, R_MOBJ = 2, R_FRAGS = 3, R_DEATHS = 4, R_HEALTH = 5, R_STATE = 6, R_COLOR = 7;
+/** PlayerRow: 9 i32 per slot (v2 added team). */
+export const ROW_WORDS = 9;
+export const R_SLOT = 0, R_HUMAN = 1, R_MOBJ = 2, R_FRAGS = 3, R_DEATHS = 4, R_HEALTH = 5, R_STATE = 6, R_COLOR = 7, R_TEAM = 8;
 
 /** Event: 8 i32. */
 export const EVENT_WORDS = 8;

@@ -10,13 +10,15 @@ export interface Prefs {
   fov: number;
   /** 'bar' = the classic status bar; 'full' = the minimal fullscreen HUD. */
   hud: 'bar' | 'full';
+  /** How other players are drawn: '3d' = the box marine model, 'sprites' = Doom's sprites. */
+  players: '3d' | 'sprites';
 }
 
 const KEY = 'freedm.prefs';
 
 const defaults = (): Prefs => ({
   name: `marine${Math.floor(Math.random() * 900 + 100)}`,
-  color: 0, sensitivity: 5, invertY: false, volume: 0.8, fov: 90, hud: 'bar',
+  color: 0, sensitivity: 5, invertY: false, volume: 0.8, fov: 90, hud: 'bar', players: '3d',
 });
 
 let cached: Prefs | null = null;
@@ -35,6 +37,7 @@ export function prefs(): Prefs {
         volume: num(raw.volume, 0, 1, d.volume),
         fov: num(raw.fov, 75, 110, d.fov),
         hud: raw.hud === 'full' ? 'full' : 'bar',
+        players: raw.players === 'sprites' ? 'sprites' : '3d',
       };
       return cached;
     }

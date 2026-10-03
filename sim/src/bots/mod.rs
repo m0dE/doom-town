@@ -309,10 +309,18 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         r if r.is_null() => false,
         r => match w.deref(r) {
             None => true,
-            Some(g) => item_value(w, slot, w.mo(g).type_ as usize) <= 0,
+            Some(g) => {
+                let m = w.mo(g);
+                !(m.flags & MF_DROPPED != 0 && m.type_ as usize == mt::MISC25) && item_value(w, slot, m.type_ as usize) <= 0
+            }
         },
     };
-    if goal_gone || tic >= w.players[slot].bot.next_goal_tic || w.players[slot].bot.goal_node < 0 {
+    // race for a boss's dropped BFG
+    let drop_race = match w.deref(w.g.boss_drop) {
+        Some(d) => w.players[slot].bot.goal_item.h != d && (tic + slot as u32).is_multiple_of(35) && dist(x, y, w.mo(d).x, w.mo(d).y) < 4000,
+        None => false,
+    };
+    if goal_gone || drop_race || tic >= w.players[slot].bot.next_goal_tic || w.players[slot].bot.goal_node < 0 {
         choose_goal(w, slot, h);
         w.players[slot].bot.need_plan = true;
     }
@@ -700,7 +708,7 @@ fn finish(w: &mut World, slot: usize, h: u32, cur_angle: Angle, yaw_target: Angl
 
 fn enemy_alive(w: &World, e: u32) -> bool {
     let m = w.mo(e);
-    m.health > 0 && m.flags & MF_SHOOTABLE != 0 && w.player_of(e).is_some()
+    m.health > 0 && m.flags & MF_SHOOTABLE != 0 && (w.player_of(e).is_some() || World::is_boss_type(m.type_ as usize))
 }
 
 fn acquire_enemy(w: &mut World, slot: usize, h: u32) {
@@ -737,6 +745,18 @@ fn acquire_enemy(w: &mut World, slot: usize, h: u32) {
             continue;
         }
         cands.push((d, e));
+    }
+    // a live boss is a target of opportunity
+    if let Some(b) = w.deref(w.g.boss) {
+        let m = w.mo(b);
+        if m.health > 0 {
+            let d = dist(x, y, m.x, m.y);
+            let off = angdiff(point_to_angle2(x, y, m.x, m.y), angle).unsigned_abs();
+            if d < 3000 && (off <= ANG1 * 70 || Some(b) == hurt_by || d < 400) {
+                // the boss is worth more than a player: prefer it unless someone is much closer
+                cands.push((d / 3, b));
+            }
+        }
     }
     cands.sort_unstable();
     let cur = w.deref(w.players[slot].bot.enemy);
@@ -975,7 +995,7 @@ fn best_item(w: &mut World, slot: usize, h: u32, maxd: i32) -> Option<(i64, u32)
         } else if !nav.reach[m.subsector as usize] {
             continue;
         }
-        let v = item_value(w, slot, m.type_ as usize);
+        let v = if m.flags & MF_DROPPED != 0 && m.type_ as usize == mt::MISC25 { 150 } else { item_value(w, slot, m.type_ as usize) };
         if v <= 0 {
             continue;
         }
@@ -1035,6 +1055,18 @@ fn random_spot(w: &mut World, slot: usize, team: i32) -> Option<(Fixed, Fixed)> 
 }
 
 fn dm_goal(w: &mut World, slot: usize, h: u32) {
+    // aggressive, armed bots go hunting a live boss
+    if let Some(b) = w.deref(w.g.boss) {
+        let p = &w.players[slot];
+        let armed = p.readyweapon != WP_PISTOL && p.readyweapon != WP_FIST;
+        if p.bot.aggression > 45 && (armed || p.bot.aggression > 75) && p.health > 50 && w.players[slot].bot.rng.chance(2, 3) {
+            let (bx, by) = {
+                let m = w.mo(b);
+                (m.x, m.y)
+            };
+            return set_goal_pos(w, slot, bx, by, 35 * 4);
+        }
+    }
     let best = best_item(w, slot, h, 4000);
     let roll = w.players[slot].bot.rng.chance(1, 2);
     match best {

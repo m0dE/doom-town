@@ -527,6 +527,15 @@ impl World {
             return false;
         }
         let special = self.line_special[line];
+        // switches that other things can activate: monsters open manual doors only
+        if self.player_of(thing).is_none() {
+            if self.map.lines[line].flags & ML_SECRET != 0 {
+                return false;
+            }
+            if !matches!(special, 1 | 32 | 33 | 34) {
+                return false;
+            }
+        }
         let sw = |w: &mut World, ok: bool, again: bool| {
             if ok {
                 w.change_switch_texture(line, again);

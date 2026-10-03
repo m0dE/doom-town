@@ -13,6 +13,7 @@ import './menu/menu.css';
 import { prefetch, loadWad, onAssetProgress } from './game/assets.js';
 import { Gfx } from './hud/gfx.js';
 import { Doomguy } from './menu/doomguy.js';
+import { drawTitle } from './menu/title.js';
 import { PLAYER_COLORS, colorLabel } from './game/colors.js';
 import { prefs, savePrefs, cleanName } from './menu/prefs.js';
 import { ServerBrowser, esc } from './menu/serverbrowser.js';
@@ -37,6 +38,18 @@ const loadingBar = $('loading-bar');
 const loadingLabel = $('loading-label');
 
 $('map-title').textContent = MAP_TITLE;
+
+// The title: our own lettering, at a whole-number pixel scale that fits the column.
+const logo = $<HTMLCanvasElement>('logo');
+const logoSize = drawTitle(logo);
+function fitLogo(): void {
+  const room = (logo.parentElement?.clientWidth ?? innerWidth) * 0.92;
+  const k = Math.max(1, Math.min(innerHeight < 800 ? 2 : 3, Math.floor(room / logoSize.w)));
+  logo.style.width = `${logoSize.w * k}px`;
+  logo.style.height = `${logoSize.h * k}px`;
+}
+fitLogo();
+addEventListener('resize', fitLogo);
 $('build').textContent = `build ${typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev'}`;
 
 // Everything a match needs starts downloading now.
@@ -59,6 +72,7 @@ nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === '
 
 const guy = new Doomguy();
 guy.mount($('doomguy'));
+(window as unknown as { __menuGuy?: Doomguy }).__menuGuy = guy;
 guy.setColor(p0.color);
 
 const swatches = $('swatches');
@@ -82,12 +96,6 @@ swatches.addEventListener('click', (e) => {
 void loadWad().then((wad) => {
   const gfx = new Gfx(wad);
   guy.setGfx(gfx);
-  const logo = gfx.patch('M_DOOM');
-  const lc = $<HTMLCanvasElement>('logo');
-  if (logo) {
-    lc.width = logo.width; lc.height = logo.height;
-    lc.getContext('2d')!.drawImage(logo.canvas, 0, 0);
-  } else lc.closest('.logo')?.classList.add('plain');
   const back = gfx.patch('INTERPIC') ?? gfx.patch('TITLEPIC');
   if (back) {
     const bc = $<HTMLCanvasElement>('backdrop');
@@ -96,7 +104,6 @@ void loadWad().then((wad) => {
     bc.style.objectFit = 'cover';
   }
 }).catch((err) => {
-  $('logo').closest('.logo')?.classList.add('plain');
   errorBox.textContent = `The game data did not load: ${err instanceof Error ? err.message : String(err)}`;
 });
 
@@ -149,7 +156,7 @@ function showMenu(): void {
   starting = false;
   loading.classList.add('hidden');
   menu.classList.remove('hidden');
-  document.title = 'Freedoom Deathmatch';
+  document.title = 'Doom Town';
   guy.start();
   browser.start();
 }
@@ -180,7 +187,7 @@ async function play(room: string, offline: boolean): Promise<void> {
     off();
     current = game;
     (window as unknown as { __game?: Game }).__game = game;
-    document.title = offline ? 'Practice — Freedoom Deathmatch' : `${room} — Freedoom Deathmatch`;
+    document.title = offline ? 'Practice — Doom Town' : `${room} — Doom Town`;
     const keep = new URLSearchParams({ room });
     if (offline) keep.set('offline', '1');
     for (const k of ['central', 'nodeUrl', 'via'] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }

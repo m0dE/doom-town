@@ -184,7 +184,7 @@ export class Renderer {
       uAoStrength: { value: this.options.ao },
       uSkyTex: { value: this.assets.skyTexId }, uSkyTop: { value: this.skyTopColor() }, uSkyStretch: { value: 160 }, // Doom: 1 sky texel per row of a 320x200 view (160 rows per unit tan)
       uSpriteAtlas: { value: this.assets.spriteAtlas }, uTrans: { value: this.assets.transTex },
-      uPspLevel: { value: 0 }, uPspLight: { value: new THREE.Vector3() },
+      uPspLevel: { value: 0 }, uPspLight: { value: new THREE.Vector3() }, uPspGlow: { value: 0.2 },
     };
     const mat = (vs: string, fs: string, extra: Partial<THREE.ShaderMaterialParameters> = {}, own: Record<string, THREE.IUniform> = {}) =>
       new THREE.RawShaderMaterial({ vertexShader: vs, fragmentShader: fs, glslVersion: THREE.GLSL3, uniforms: { ...this.u, ...own }, ...extra });
@@ -239,6 +239,9 @@ export class Renderer {
     this.simTex = Int32Array.from(textures, (n) => this.assets.textureId(n));
     this.simFlat = Int32Array.from(flats, (n) => this.assets.flatId(n));
   }
+
+  /** The current player-body hook, if any. */
+  get playerBodyRenderer(): PlayerBodyRenderer | null { return this.bodyRenderer; }
 
   /** Draw player bodies with something else (3D models); null = classic sprites. */
   setPlayerBodyRenderer(r: PlayerBodyRenderer | null): void {
@@ -328,7 +331,7 @@ export class Renderer {
       const sector = this.sectorAt(m.x, m.y);
       if (this.options.dynamicLights) this.lights.addMobj(m, sector, now);
       if (m.id === viewId) continue;
-      if (useBodies && m.slot >= 0 && m.sprite === SPR_PLAY && !(m.flags & MF_SHADOW)) {
+      if (useBodies && m.sprite === SPR_PLAY) {
         this.bodies[nb++] = m;
         continue;
       }
@@ -353,9 +356,16 @@ export class Renderer {
     this.stats.lights = this.lights.count;
 
     if (this.bodyRenderer) {
+      const dyn = this.options.dynamicLights ? this.options.lightIntensity : 0;
       this.bodyRenderer.update(this.bodies, nb, {
-        scene: this.scene, camera: this.camera, extralight, tic,
+        scene: this.scene, camera: this.camera, extralight, tic, time: now,
         lightOf: (m) => this.lightLv[this.sectorAt(m.x, m.y)] ?? 0,
+        floorOf: (m) => this.floorH[this.sectorAt(m.x, m.y)] ?? 0,
+        dynLightAt: (m, z, out) => {
+          if (!dyn) return out.set(0, 0, 0);
+          return this.lights.lightAt(m.x, m.y, z, this.sectorAt(m.x, m.y), out).multiplyScalar(dyn);
+        },
+        palette: this.assets.palTex, palNum: pal, fixedColormap: fixed,
       });
     }
 

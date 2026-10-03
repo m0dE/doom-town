@@ -13,6 +13,10 @@ export interface WorldView {
   /** CSS px of status bar over the bottom of the view (the renderer lifts the weapon). */
   hudHeight(px: number): void;
   setFov(deg: number): void;
+  /** Player bodies: the 3D marine or Doom's sprites (views without 3D ignore it). */
+  setPlayers?(mode: '3d' | 'sprites'): void;
+  /** Frame statistics, for tests. */
+  stats?(): Record<string, number>;
   dispose(): void;
 }
 

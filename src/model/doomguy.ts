@@ -67,7 +67,8 @@ export class DoomguyModel {
   private walkAmp = 0;
   private lastWalkFrame = -1;
   private lastWalkChange = -10;
-  private readonly seed: number;
+  private seed: number;
+  private fuzz = false;
 
   constructor(private readonly shared: Shared, color = 0, seed = 0) {
     this.seed = seed;
@@ -113,6 +114,53 @@ export class DoomguyModel {
 
   /** Brightness of the fullbright muzzle flash under scene lights (start screen glow). */
   setFlashBoost(k: number): void { this.uniforms.uFlashBoost.value = k; }
+
+  /**
+   * In the world: draw through the renderer's palette texture (256 × 14·34, COLORMAP rows
+   * folded in) so screen tints and fixed colormaps match the sprites; `palNum` -1 = off.
+   */
+  setWorldPalette(tex: THREE.Texture | null, palNum: number, fixedColormap = -1): void {
+    this.uniforms.uWorldPal.value = tex;
+    this.uniforms.uPalNum.value = tex ? palNum : -1;
+    this.uniforms.uFixedCmap.value = fixedColormap;
+  }
+
+  /** Dynamic light reaching the model (linear RGB), added like the sprites' (world palette mode). */
+  setDynamicLight(r: number, g: number, b: number): void { this.uniforms.uDyn.value.set(r, g, b); }
+
+  /** 1: alpha carries the emissive amount (a renderer that blooms on alpha); 0: opaque alpha. */
+  setEmissiveAlpha(k: number): void { this.uniforms.uEmisAlpha.value = k; }
+
+  /** Spectre fuzz (invisibility): darkens what is behind, like the fuzz sprites. */
+  setFuzz(on: boolean, time = 0): void {
+    this.uniforms.uFuzz.value = on ? 1 : 0;
+    this.uniforms.uTime.value = time;
+    if (on === this.fuzz) return;
+    this.fuzz = on;
+    const m = this.material;
+    m.transparent = on;
+    m.depthWrite = !on;
+    m.blending = on ? THREE.CustomBlending : THREE.NormalBlending;
+    m.blendEquation = THREE.AddEquation;
+    m.blendSrc = THREE.ZeroFactor; m.blendDst = THREE.SrcColorFactor;
+    m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor;
+    m.needsUpdate = true;
+  }
+
+  /** Forget the animation state (a pooled model taking over another body). */
+  reset(seed = this.seed): void {
+    this.seed = seed;
+    this.cur = zeroPose();
+    this.lastTime = -1;
+    this.lastFrame = -1;
+    this.frameStart = 0;
+    this.deathStart = 0;
+    this.gibStartTime = -1;
+    this.walkPhase = 0;
+    this.walkAmp = 0;
+    this.lastWalkFrame = -1;
+    this.lastWalkChange = -10;
+  }
 
   pose(p: DoomguyPoseInput): void {
     const time = p.time;

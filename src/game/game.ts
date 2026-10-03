@@ -41,6 +41,7 @@ import { GameSound, type SoundOut } from './sound.js';
 import { AutomapView, type WorldView } from './automap.js';
 import { Renderer } from '../render/index.js';
 import { PauseMenu } from './pause.js';
+import { ModelBodies, bodyDebug } from './bodies.js';
 import { prefs, savePrefs, cleanName } from '../menu/prefs.js';
 import { parseMap, SPRITE_NAMES, type Wad } from '../wad/index.js';
 import type { RenderEvent, RenderFrame, RenderMobj, RenderSector } from '../render/types.js';
@@ -50,6 +51,14 @@ const FRAC = 1 / 65536;
 const BAM = (2 * Math.PI) / 4294967296;
 /** A body that moved more than this in one tic teleported (DESIGN: 64 units). */
 const TELEPORT = 64 * 65536;
+/**
+ * Our own projectiles (MT_ROCKET, MT_PLASMA, MT_BFG in mobjtype_t order). MobjView has
+ * no owner, so a missile is ours when it first appears within OWN_RADIUS of our body in
+ * the same world and tic (P_SpawnPlayerMissile spawns at the shooter and moves it at
+ * most 1.5 x speed = 37.5 units before the tic ends).
+ */
+const OWN_TYPES = new Set([33, 34, 35]);
+const OWN_RADIUS = 64 * 65536;
 /** Snapshots: every 10 s of tics (DESIGN "Netcode numbers"). */
 const SNAPSHOT_EVERY = TICRATE * 10;
 
@@ -126,6 +135,15 @@ function warmupFrame(wad: Wad): RenderFrame {
 /** A renderer built while the menu is up, so Play does not wait on the atlas and the shaders. */
 let warm: { canvas: HTMLCanvasElement; renderer: Renderer } | null = null;
 
+const EMPTY = new Int32Array(0);
+
+/** Ids of the missiles that may be ours (OWN_TYPES), in world order. */
+function missileIds(mobjs: Int32Array): Int32Array {
+  const out: number[] = [];
+  for (let i = 0, n = mobjs.length / MOBJ_WORDS; i < n; i++) if (OWN_TYPES.has(mobjs[i * MOBJ_WORDS + M_TYPE] & 0xffff)) out.push(mobjs[i * MOBJ_WORDS + M_ID]);
+  return Int32Array.from(out);
+}
+
 export class Game {
   /**
    * Build the 3D view ahead of time (from the start screen, when the WAD is in).
@@ -140,6 +158,8 @@ export class Game {
     const t0 = performance.now();
     try {
       const renderer = new Renderer(canvas, wad, MAP_LUMP, { fov: prefs().fov });
+      // the 3D marines too: their factory and shader are part of the first frame
+      if (prefs().players === '3d') renderer.setPlayerBodyRenderer(new ModelBodies(wad));
       // One frame now compiles every shader, which is otherwise the first frame of the match.
       renderer.setFrame(warmupFrame(wad));
       renderer.render();
@@ -161,6 +181,14 @@ export class Game {
 
   private readonly confirmed = new TicRing<Snap>(96);
   private readonly selfRing = new TicRing<Int32Array>(96);
+  /**
+   * Own projectiles drawn from the prediction (see draw()): ids judged ours, the
+   * MobjView rows of those per predicted frame, and every candidate missile id per
+   * predicted frame (to tell a new one from an old one).
+   */
+  private readonly ownMissiles = new Set<number>();
+  private readonly predOwn = new TicRing<Int32Array>(96);
+  private readonly predCand = new TicRing<Int32Array>(96);
   private lines: Int32Array | null = null;
   private mySlot = -1;
   private raf = 0;
@@ -235,7 +263,7 @@ export class Game {
     this.pause = new PauseMenu(gfx, {
       resume: () => this.resume(),
       leave: () => this.onLeave?.(),
-      changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); },
+      changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); this.view.setPlayers?.(np.players); },
     });
 
     this.input = new Input(this.view.canvas, {
@@ -308,7 +336,9 @@ export class Game {
       mySlot: slot,
       ids: s.ids.slice(),
     };
+    const prevSnap = this.confirmed.get(f - 1);
     this.confirmed.record(f, snap);
+    if (snap.me && prevSnap) this.claimMissiles(snap.mobjs, missileIds(prevSnap.mobjs), snap.me);
     if (!this.lines) this.lines = sim.lines(s.h);
     if (f <= this.lastEventFrame) return;
     this.lastEventFrame = f;
@@ -331,6 +361,7 @@ export class Game {
     if (slot < 0) return;
     const pv = this.app.sim.player(s.h, slot);
     this.selfRing.record(f, pv);
+    this.recordOwnMissiles(s, f, pv);
     this.predictedAt = performance.now();
     const sent = this.sentAngle.get(f);
     if (sent !== undefined) this.yawOffset = ((pv[PV.angle] >>> 0) - ((sent << 16) >>> 0)) >>> 0;
@@ -341,6 +372,46 @@ export class Game {
       for (let i = 0; i < ev.length; i += EVENT_WORDS) {
         if (ev[i] === EV_SOUND && ev[i + 7] === slot + 1) this.sound.play(ev[i + 1], ev[i + 2], ev[i + 4] * FRAC, ev[i + 5] * FRAC, ev[i + 3], true);
       }
+    }
+  }
+
+  /** Missiles new in `mobjs` (not in `prev`) that spawned at our body: ours. */
+  private claimMissiles(mobjs: Int32Array, prev: Int32Array | null, me: Int32Array): void {
+    if (!prev || me[PV.state] !== 0) return;
+    const n = mobjs.length / MOBJ_WORDS;
+    for (let i = 0; i < n; i++) {
+      const o = i * MOBJ_WORDS;
+      if (!OWN_TYPES.has(mobjs[o + M_TYPE] & 0xffff)) continue;
+      const id = mobjs[o + M_ID];
+      if (this.ownMissiles.has(id) || prev.includes(id)) continue;
+      if (Math.abs(mobjs[o + M_X] - me[PV.x]) < OWN_RADIUS && Math.abs(mobjs[o + M_Y] - me[PV.y]) < OWN_RADIUS) this.ownMissiles.add(id);
+    }
+  }
+
+  /** The predicted world's copy of our projectiles at frame f (rows of MobjView). */
+  private recordOwnMissiles(s: DoomState, f: number, pv: Int32Array): void {
+    const mobjs = this.app.sim.mobjs(s.h);
+    const cand = missileIds(mobjs);
+    const conf = this.confirmed.get(f - 1);
+    const prev = this.predCand.get(f - 1) ?? (conf ? missileIds(conf.mobjs) : null);
+    this.predCand.record(f, cand);
+    this.claimMissiles(mobjs, prev, pv);
+    if (!this.ownMissiles.size) { this.predOwn.record(f, EMPTY); return; }
+    let k = 0;
+    const n = mobjs.length / MOBJ_WORDS;
+    for (let i = 0; i < n; i++) if (this.ownMissiles.has(mobjs[i * MOBJ_WORDS + M_ID])) k++;
+    const rows = new Int32Array(k * MOBJ_WORDS);
+    k = 0;
+    for (let i = 0; i < n; i++) {
+      if (!this.ownMissiles.has(mobjs[i * MOBJ_WORDS + M_ID])) continue;
+      rows.set(mobjs.subarray(i * MOBJ_WORDS, (i + 1) * MOBJ_WORDS), k++ * MOBJ_WORDS);
+    }
+    this.predOwn.record(f, rows);
+    // forget ids that neither world has any more
+    if (this.ownMissiles.size > 32) {
+      const latest = this.confirmed.latest();
+      const conf = latest ? missileIds(latest.mobjs) : EMPTY;
+      for (const id of this.ownMissiles) if (!cand.includes(id) && !conf.includes(id)) this.ownMissiles.delete(id);
     }
   }
 
@@ -447,6 +518,8 @@ export class Game {
 
   /** Frames drawn, and when the count started: the page's frame rate for tests and the debug line. */
   private drawn = 0;
+  /** CPU ms spent in the view's render call, smoothed (tests, perf numbers) */
+  private renderMs = 0;
   private drawnSince = 0;
 
   private draw(now: number): void {
@@ -515,13 +588,54 @@ export class Game {
       f.viewMobjId = 0;
     }
 
-    // --- everyone else, confirmed at `others`
+    // --- everyone else, confirmed at `others`. Our own projectiles come from the
+    // prediction instead (at `self`, like the camera), so a rocket leaves the barrel on
+    // the frame we fire it rather than a playout delay later; their confirmed copies
+    // are skipped so nothing is drawn twice. When there is no prediction to draw from,
+    // the confirmed copies are drawn as everything else.
+    const own = t.drawSelfFromPrediction && this.ownMissiles.size ? this.predOwn.pair(t.self) : null;
+    let count = this.addMobjs(a, b, frac, own ? this.ownMissiles : null, 0);
+    if (own) count = this.addMobjs({ mobjs: own.a } as Snap, { mobjs: own.b } as Snap, own.frac, null, count);
+    if (this.staged.length && pv) count = this.addStaged(count, cam, pv[PV.z] * FRAC);
+    f.mobjCount = count;
+
+
+    // --- sectors (doors and lifts move between tics too)
+    const ns = Math.min(a.sectors.length, b.sectors.length) / 5;
+    for (let i = 0; i < ns; i++) {
+      const s = this.sectorPool[i] ?? (this.sectorPool[i] = { floor: 0, ceil: 0, light: 0, floorpic: 0, ceilpic: 0 });
+      const o = i * 5;
+      s.floor = lerp(a.sectors[o], b.sectors[o], frac) * FRAC;
+      s.ceil = lerp(a.sectors[o + 1], b.sectors[o + 1], frac) * FRAC;
+      s.light = b.sectors[o + 2];
+      s.floorpic = b.sectors[o + 3];
+      s.ceilpic = b.sectors[o + 4];
+    }
+    this.sectorPool.length = ns;
+    f.lineTextures = this.lines;
+
+    // --- events since the last frame
+    f.events = this.pending.splice(0);
+    f.eventCount = (f.events as RenderEvent[]).length;
+
+    this.sound.frame(cam.x, cam.y, cam.yaw, this.mobjPool, count);
+    this.view.hudHeight(prefs().hud === 'bar' && f.player ? this.hud.barHeight : 0);
+    const r0 = performance.now();
+    this.view.render(f);
+    this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
+
+    // --- HUD
+    this.updateHud(now, dt, pv, b, dead);
+  }
+
+  /** Interpolated RenderMobjs from a pair of frames into the pool from `count`; `skip` ids are left out. */
+  private addMobjs(a: Snap, b: Snap, frac: number, skip: Set<number> | null, count: number): number {
     const ia = indexOf(a);
     const nb = b.mobjs.length / MOBJ_WORDS;
-    let count = 0;
     for (let j = 0; j < nb; j++) {
       const ob = j * MOBJ_WORDS;
       const id = b.mobjs[ob + M_ID];
+      if (skip?.has(id)) continue;
       const ja = ia.get(id);
       const A = ja === undefined ? b.mobjs : a.mobjs;
       const oa = ja === undefined ? ob : ja * MOBJ_WORDS;
@@ -552,32 +666,7 @@ export class Game {
       m.slot = (type >>> 16) - 1;
       m.translation = m.slot >= 0 ? this.slotColor(m.slot, b) : 0;
     }
-    f.mobjCount = count;
-
-    // --- sectors (doors and lifts move between tics too)
-    const ns = Math.min(a.sectors.length, b.sectors.length) / 5;
-    for (let i = 0; i < ns; i++) {
-      const s = this.sectorPool[i] ?? (this.sectorPool[i] = { floor: 0, ceil: 0, light: 0, floorpic: 0, ceilpic: 0 });
-      const o = i * 5;
-      s.floor = lerp(a.sectors[o], b.sectors[o], frac) * FRAC;
-      s.ceil = lerp(a.sectors[o + 1], b.sectors[o + 1], frac) * FRAC;
-      s.light = b.sectors[o + 2];
-      s.floorpic = b.sectors[o + 3];
-      s.ceilpic = b.sectors[o + 4];
-    }
-    this.sectorPool.length = ns;
-    f.lineTextures = this.lines;
-
-    // --- events since the last frame
-    f.events = this.pending.splice(0);
-    f.eventCount = (f.events as RenderEvent[]).length;
-
-    this.sound.frame(cam.x, cam.y, cam.yaw, this.mobjPool, count);
-    this.view.hudHeight(prefs().hud === 'bar' && f.player ? this.hud.barHeight : 0);
-    this.view.render(f);
-
-    // --- HUD
-    this.updateHud(now, dt, pv, b, dead);
+    return count;
   }
 
   private updateHud(now: number, dt: number, pv: Int32Array | null, snap: Snap, dead: boolean): void {
@@ -698,7 +787,19 @@ export class Game {
       const r = pre?.renderer ?? new Renderer(canvas, wad, MAP_LUMP, { fov });
       if (pre) r.setOptions({ fov });
       r.setSimNameTables(app.sim.textureNames, app.sim.flatNames);
+      let players: '3d' | 'sprites' | null = null;
+      const setPlayers = (mode: '3d' | 'sprites'): void => {
+        if (mode === players) return;
+        players = mode;
+        r.setPlayerBodyRenderer(mode === '3d' ? (r.playerBodyRenderer ?? new ModelBodies(wad)) : null);
+      };
+      setPlayers(prefs().players);
       return {
+        setPlayers,
+        stats: () => {
+          const b = r.playerBodyRenderer as ModelBodies | null;
+          return { ...r.stats, bodies3d: b?.count ?? 0, posed3d: b?.posed ?? 0 };
+        },
         canvas,
         render: (f) => { r.setFrame(f); r.render(); },
         resize: () => { /* the renderer follows its canvas */ },
@@ -733,6 +834,9 @@ export class Game {
     this.view.dispose();
     this.confirmed.clear();
     this.selfRing.clear();
+    this.predOwn.clear();
+    this.predCand.clear();
+    this.ownMissiles.clear();
   }
 
   // ------------------------------------------------------------------ tests
@@ -750,11 +854,73 @@ export class Game {
       clones: this.app.stats.clones, decodes: this.app.stats.decodes,
       maxPitch: MAX_PITCH,
       fps: this.drawn / Math.max(0.001, (performance.now() - this.drawnSince) / 1000),
+      ownMissiles: this.ownMissiles.size, renderMs: this.renderMs,
+      weapon: pv ? pv[PV.ready] : null, owned: pv ? pv[PV.owned] : null,
+      ammo: pv ? Array.from(pv.subarray(PV.ammo, PV.ammo + 4)) : null,
+      angle: pv ? ((pv[PV.angle] >>> 0) * BAM) : null,
+      render: this.view.stats?.() ?? null,
     };
   }
 
   /** For tests: steer without a mouse. */
   testLook(yaw: number, pitch: number): void { this.input.face(yaw, pitch); }
+
+  /**
+   * For tests (screenshots): extra player bodies placed relative to the camera, drawn
+   * through the same path as the sim's (forward/left in map units, facing in radians
+   * relative to looking back at us, Doom frame letter, colour, MF_* flags).
+   */
+  testStage(actors: { fwd: number; left: number; face?: number; frame: string; color: number; flags?: number }[]): void { this.staged = actors; }
+  private staged: { fwd: number; left: number; face?: number; frame: string; color: number; flags?: number }[] = [];
+
+  private addStaged(count: number, cam: { x: number; y: number; yaw: number }, floorZ: number): number {
+    const play = SPRITE_NAMES.indexOf('PLAY');
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    this.staged.forEach((a, i) => {
+      const m = this.mobjPool[count] ?? (this.mobjPool[count] = { id: 0, x: 0, y: 0, z: 0, angle: 0, sprite: 0, frame: 0, flags: 0, type: 0, slot: -1, translation: 0 });
+      count++;
+      m.id = 0x7fff0000 + i;
+      m.x = cam.x + c * a.fwd - s * a.left;
+      m.y = cam.y + s * a.fwd + c * a.left;
+      m.z = floorZ;
+      m.angle = cam.yaw + Math.PI + (a.face ?? 0);
+      m.sprite = play;
+      m.frame = a.frame.charCodeAt(0) - 65;
+      m.flags = a.flags ?? 0;
+      m.type = 0;
+      m.slot = 60 + (i % 4);
+      m.translation = a.color;
+    });
+    return count;
+  }
+
+  /** For tests: draw every 3D body with the invisibility fuzz. */
+  testBodyFuzz(on: boolean): void { bodyDebug.fuzz = on; }
+
+  /** For tests: look along a map direction (radians), whatever yaw offset the sim added. */
+  testFace(dir: number, pitch = 0): void { this.input.face(dir - (this.yawOffset >>> 0) * BAM, pitch); }
+
+  /** For tests: the player bodies and corpses around us (confirmed), nearest first. */
+  testBodies(): { id: number; slot: number; dist: number; dir: number; dz: number; frame: string; flags: number; color: number }[] {
+    const snap = this.confirmed.latest();
+    const me = snap?.me;
+    if (!snap || !me) return [];
+    const out = [];
+    const play = SPRITE_NAMES.indexOf('PLAY');
+    for (let i = 0, n = snap.mobjs.length / MOBJ_WORDS; i < n; i++) {
+      const o = i * MOBJ_WORDS;
+      if ((snap.mobjs[o + M_SPRITE] & 0xffff) !== play || snap.mobjs[o + M_ID] === me[PV.mobj]) continue;
+      const dx = (snap.mobjs[o + M_X] - me[PV.x]) * FRAC, dy = (snap.mobjs[o + M_Y] - me[PV.y]) * FRAC;
+      const slot = (snap.mobjs[o + M_TYPE] >>> 16) - 1;
+      out.push({
+        id: snap.mobjs[o + M_ID], slot, dist: Math.hypot(dx, dy), dir: Math.atan2(dy, dx),
+        dz: (snap.mobjs[o + M_Z] - me[PV.z]) * FRAC,
+        frame: String.fromCharCode(65 + ((snap.mobjs[o + M_SPRITE] >>> 16) & 0x7fff)),
+        flags: snap.mobjs[o + M_FLAGS], color: slot >= 0 ? this.slotColor(slot, snap) : -1,
+      });
+    }
+    return out.sort((x, y) => x.dist - y.dist);
+  }
 
   /** For tests: hold an action ('forward', 'attack', 'jump', 'w3', ...). */
   testHold(action: string, down: boolean): void { this.input.hold(action, down); }

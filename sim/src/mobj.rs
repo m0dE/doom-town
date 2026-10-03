@@ -64,6 +64,24 @@ impl World {
                 self.start_sound(h, s);
             }
             Action::BFGSpray => self.a_bfg_spray(h),
+            Action::Look => self.a_look(h),
+            Action::Chase => self.a_chase(h),
+            Action::FaceTarget => self.a_face_target(h),
+            Action::CyberAttack => self.a_cyber_attack(h),
+            Action::SPosAttack => self.a_spos_attack(h),
+            Action::SpidRefire => self.a_spid_refire(h),
+            Action::Hoof => {
+                self.start_sound(h, sfx::hoof);
+                self.a_chase(h);
+            }
+            Action::Metal => {
+                self.start_sound(h, sfx::metal);
+                self.a_chase(h);
+            }
+            Action::BabyMetal => {
+                self.start_sound(h, sfx::bspwlk);
+                self.a_chase(h);
+            }
             _ => {}
         }
     }

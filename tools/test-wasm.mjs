@@ -179,9 +179,26 @@ for (let t = 0; t < 70; t++) { ex.world_tick(ht); ex.world_tick(ht2) }
 check(ex.world_hash(ht2) === ex.world_hash(ht), 'TDM copies in sync')
 ex.world_free(ht); ex.world_free(ht2)
 
+// Random bosses (flags bit 0) in FFA: a boss appears about 60 s in
+const hb = newCfg([2, 0, 64, 0, 0, 0, 0, 0, 0, 0, 1, mapId, 4242, 1])
+let bossAt = -1
+for (let t = 0; t < 35 * 70 && bossAt < 0; t++) {
+  ex.world_tick(hb)
+  const ep = ex.world_events(hb)
+  const n = new Uint32Array(ex.memory.buffer, ep, 1)[0]
+  const ev = i32(ep + 4, n * 8)
+  for (let k = 0; k < n; k++) if (ev[k * 8] === 14) bossAt = t
+}
+const bmv = ex.world_view_match(hb)
+const bpts = i32(bmv, 13)[12]
+const boss = i32(bmv + (13 + bpts * 6) * 4, 5)
+console.log(`boss spawned at tic ${bossAt}: id ${boss[0]} type ${boss[1]} health ${boss[2]}/${boss[3]}`)
+check(bossAt >= 2099 && boss[0] > 0 && boss[2] > 0 && boss[4] === -1, 'boss spawns and shows in world_view_match')
+ex.world_free(hb)
+
 // War with 200 bots on MAP19 (or WAR01 if present): cost per tic in wasm
 let warMap = mapId, warName = 'MAP19'
-for (const f of ['public/maps-src/WAR01.wad', 'public/maps/WAR01.wad']) {
+for (const f of ['public/maps-src/WAR01.wad']) {
   try {
     const wb = readFileSync(join(root, f))
     const wp2 = pass(wb)

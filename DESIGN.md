@@ -143,7 +143,7 @@ BFG (spider or cyberdemon)" and "it should clearly indicate on room name saying 
   A_FaceTarget, P_Move/P_NewChaseDir, A_CyberAttack rockets, A_SpidRefire/A_SPosAttack
   chaingun, A_Hoof/A_Metal/A_BabyMetal sounds, pain/death states) — targets the
   nearest visible player, retargets when hurt by someone else (vanilla infighting rule for
-  players). Health scaled for crowds: vanilla × (1 + live players / 16), capped at ×5.
+  players). Health scaled for crowds: vanilla × (1 + live players / 16), capped at ×3 (×5 took 2–3 min for 64 bots to kill, measured).
 - **Reward:** on death it drops a BFG 9000 (MF_DROPPED: taken by the first player who
   touches it, never respawns — unlike map weapons) plus a cell pack, at the death spot.
   The killer gets +5 frags (TDM: the team gets +5). Bots treat a live boss as a target
@@ -216,6 +216,18 @@ As implemented (sim_version 3):
   or not covering every vertex; REJECT may be missing. Things 9000/9001 are team spawn
   spots, 9010 capture points (angle = radius / 8, default 192). FreeDM maps get five
   generated points (middle of the two bases, then spread out).
+- Random bosses (sim_version 5): the `flags` word follows the seed in `world_new_cfg`
+  (so a flags word needs a seed word before it). `world_view_match` appends the 5 boss
+  words after the capture points (offset 13 + 6 × point count). Placement scans the spawn
+  spots from a P_Random start for one that fits the boss (ceiling, walls, things) and is
+  >= 1024 units from every live player, retrying each second; after 5 failed seconds
+  (crowded maps — common on MAP19 with 64 players) it takes the fitting spot farthest from
+  the nearest player. If the rolled boss fits nowhere the other one is tried. A spawned
+  boss starts chasing the nearest player. Obituary events of players killed by a monster
+  carry the monster's mobjtype in `d` (killer slot -1); such deaths cost no frag (vanilla).
+  Event 15 x/y = the death spot (= the dropped BFG's position; a pickup event of that BFG
+  has the same x/y). The dropped BFG gives the weapon + 1 clip of cells and is removed;
+  the cell pack is a normal (dropped) pickup.
 
 ## Determinism
 

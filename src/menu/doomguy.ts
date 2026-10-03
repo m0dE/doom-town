@@ -1,14 +1,17 @@
 /**
- * The start screen's marine: the player sprite (PLAY*) straight out of the
- * WAD, palette-correct, in the player's colour, walking and slowly turning
- * through Doom's eight rotations, stopping now and then to aim and fire.
+ * The start screen's marine: the 3D box model (src/model, see hero3d.ts) under the
+ * hero lighting, in the player's colour, turning slowly and now and then aiming
+ * and firing. Drag turns him.
  *
- * Drawn at the sprite's own resolution into a small canvas that CSS scales up
- * with `image-rendering: pixelated`, so every pixel stays a crisp square.
+ * Kept light: the 3D view (three.js, the model's atlas) is loaded and built only
+ * once the WAD is in, renders only while the menu is shown, and is released when
+ * a match starts (rebuilt on return). Where WebGL will not start, the player
+ * sprite (PLAY*) straight out of the WAD is drawn instead: palette-correct, at
+ * its own resolution in a small canvas that CSS scales up with
+ * `image-rendering: pixelated`, walking and turning through Doom's eight rotations.
  *
- * Self-contained on purpose: the start screen talks to it only through
- * `mount(el)` / `setColor(i)` / `start()` / `stop()` / `dispose()`, so a 3D
- * model (src/model/) can replace the sprite without the menu changing.
+ * The start screen talks to it only through `mount(el)` / `setGfx(g)` /
+ * `setColor(i)` / `start()` / `stop()` / `dispose()`.
  */
 import type { Gfx } from '../hud/gfx.js';
 import { translationFor } from '../game/colors.js';
@@ -16,8 +19,16 @@ import { translationFor } from '../game/colors.js';
 const W = 72, H = 72, BASE = 66, CX = 36;
 const TIC = 1000 / 35;
 
+type Hero = import('./hero3d.js').Hero3D;
+
 export class Doomguy {
   readonly canvas: HTMLCanvasElement;
+  private host: HTMLElement | null = null;
+  private hero: Hero | null = null;
+  private heroLoading = false;
+  /** WebGL did not start (or ?hero=2d): the sprite for good */
+  private no3d = new URLSearchParams(location.search).get('hero') === '2d';
+  private running = false;
   private readonly ctx: CanvasRenderingContext2D;
   private gfx: Gfx | null = null;
   private color = 0;
@@ -46,25 +57,68 @@ export class Doomguy {
     this.canvas.addEventListener('pointercancel', up);
   }
 
-  /** Put the marine into `el` (its size is the element's; CSS scales the pixels). */
-  mount(el: HTMLElement): void { el.append(this.canvas); this.start(); }
+  /** Put the marine into `el` (its size is the element's). */
+  mount(el: HTMLElement): void { this.host = el; this.start(); }
 
   dispose(): void { this.stop(); this.canvas.remove(); }
 
   /** The WAD's graphics, once loaded; until then nothing is drawn. */
-  setGfx(g: Gfx): void { this.gfx = g; }
-  setColor(c: number): void { this.color = c; }
+  setGfx(g: Gfx): void { this.gfx = g; if (this.running) this.ensureHero(); }
+  setColor(c: number): void { this.color = c; this.hero?.setColor(c); }
 
+  /** Start drawing (the menu is shown). */
   start(): void {
+    this.running = true;
+    this.ensureHero();
     if (this.raf) return;
     this.t0 = performance.now();
-    const loop = (now: number): void => { this.raf = requestAnimationFrame(loop); this.draw(now); };
+    const loop = (now: number): void => {
+      this.raf = requestAnimationFrame(loop);
+      if (this.hero) this.hero.render(now / 1000);
+      else if (this.no3d) this.draw(now);
+    };
     this.raf = requestAnimationFrame(loop);
   }
 
+  /** Stop drawing and give the 3D view's GPU memory back (a match is starting). */
   stop(): void {
+    this.running = false;
     cancelAnimationFrame(this.raf);
     this.raf = 0;
+    if (this.hero) { this.hero.dispose(); this.hero = null; this.host?.parentElement?.classList.remove('has-3d'); }
+  }
+
+  /** Frame time of the 3D view, for tests (null when the sprite is drawn). */
+  get heroFrameMs(): number | null { return this.hero ? this.hero.frameMs : null; }
+
+  /** For tests: hold a turn (radians from facing the camera) and/or start the aim-and-fire. */
+  testPose(yaw: number | null, fire = false, frame = -1): void { this.hero?.testPose(yaw, fire, frame); }
+
+  private ensureHero(): void {
+    if (this.hero || this.heroLoading || !this.host) return;
+    if (this.no3d || !this.gfx) { if (this.no3d) this.useSprite(); return; }
+    this.heroLoading = true;
+    const wad = this.gfx.wad;
+    import('./hero3d.js').then(({ Hero3D }) => {
+      this.heroLoading = false;
+      if (!this.running || this.hero) return;
+      const t0 = performance.now();
+      const hero = new Hero3D(wad, this.color);
+      this.canvas.remove();
+      this.host!.append(hero.canvas);
+      this.host!.parentElement?.classList.add('has-3d');
+      this.hero = hero;
+      console.info(`[menu] 3D marine ready in ${Math.round(performance.now() - t0)} ms (WebGL context ${Math.round(hero.glMs)} ms)`);
+    }).catch((err: unknown) => {
+      this.heroLoading = false;
+      console.warn('[menu] no 3D marine, drawing the sprite:', err);
+      this.no3d = true;
+      this.useSprite();
+    });
+  }
+
+  private useSprite(): void {
+    if (this.host && !this.canvas.isConnected) this.host.append(this.canvas);
   }
 
   private draw(now: number): void {

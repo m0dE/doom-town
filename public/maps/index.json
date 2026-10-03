@@ -1,0 +1,155 @@
+{
+  "base": "freedm-lite.wad",
+  "baseBytes": 6823459,
+  "baseArtMap": "MAP19",
+  "rotations": {
+    "deathmatch": [
+      "MAP19",
+      "MAP24",
+      "MAP20",
+      "MAP30",
+      "MAP27",
+      "MAP32"
+    ],
+    "teamDeathmatch": [
+      "MAP19",
+      "MAP24",
+      "MAP20",
+      "MAP30",
+      "MAP27",
+      "MAP32"
+    ],
+    "elimination": [
+      "MAP11",
+      "MAP05",
+      "MAP18",
+      "MAP17"
+    ],
+    "war": [
+      "WAR01",
+      "WAR02"
+    ]
+  },
+  "maps": {
+    "MAP19": {
+      "title": "DM19: Tech Isle",
+      "sky": "SKY2",
+      "pak": "maps/MAP19.wad",
+      "pakBytes": 12,
+      "textures": 74,
+      "flats": 36,
+      "lines": 1257,
+      "sectors": 215
+    },
+    "MAP24": {
+      "title": "DM24: Flooded Base",
+      "sky": "SKY3",
+      "pak": "maps/MAP24.wad",
+      "pakBytes": 300851,
+      "textures": 36,
+      "flats": 28,
+      "lines": 1853,
+      "sectors": 336
+    },
+    "MAP20": {
+      "title": "DM20: Warehouse",
+      "sky": "SKY2",
+      "pak": "maps/MAP20.wad",
+      "pakBytes": 306554,
+      "textures": 81,
+      "flats": 35,
+      "lines": 1446,
+      "sectors": 191
+    },
+    "MAP30": {
+      "title": "DM30: Last Man Standing",
+      "sky": "SKY3",
+      "pak": "maps/MAP30.wad",
+      "pakBytes": 589139,
+      "textures": 70,
+      "flats": 46,
+      "lines": 915,
+      "sectors": 162
+    },
+    "MAP27": {
+      "title": "DM27: The Exile",
+      "sky": "SKY3",
+      "pak": "maps/MAP27.wad",
+      "pakBytes": 109920,
+      "textures": 15,
+      "flats": 8,
+      "lines": 639,
+      "sectors": 152
+    },
+    "MAP32": {
+      "title": "DM32: Fourplay",
+      "sky": "SKY3",
+      "pak": "maps/MAP32.wad",
+      "pakBytes": 392948,
+      "textures": 69,
+      "flats": 31,
+      "lines": 1111,
+      "sectors": 164
+    },
+    "MAP11": {
+      "title": "DM11: Isolated Facility",
+      "sky": "SKY1",
+      "pak": "maps/MAP11.wad",
+      "pakBytes": 144680,
+      "textures": 31,
+      "flats": 21,
+      "lines": 606,
+      "sectors": 63
+    },
+    "MAP05": {
+      "title": "DM05: Dense Fields",
+      "sky": "SKY1",
+      "pak": "maps/MAP05.wad",
+      "pakBytes": 94520,
+      "textures": 16,
+      "flats": 8,
+      "lines": 531,
+      "sectors": 105
+    },
+    "MAP18": {
+      "title": "DM18: Deserted Courtyard",
+      "sky": "SKY2",
+      "pak": "maps/MAP18.wad",
+      "pakBytes": 149616,
+      "textures": 22,
+      "flats": 16,
+      "lines": 619,
+      "sectors": 123
+    },
+    "MAP17": {
+      "title": "DM17: Underwoods",
+      "sky": "SKY2",
+      "pak": "maps/MAP17.wad",
+      "pakBytes": 148392,
+      "textures": 19,
+      "flats": 20,
+      "lines": 399,
+      "sectors": 75
+    },
+    "WAR01": {
+      "title": "WAR01: Nukage Front",
+      "sky": "SKY1",
+      "pak": "maps/WAR01.wad",
+      "pakBytes": 557034,
+      "textures": 51,
+      "flats": 40,
+      "lines": 5656,
+      "sectors": 1102
+    },
+    "WAR02": {
+      "title": "WAR02: Canal City",
+      "sky": "SKY1",
+      "pak": "maps/WAR02.wad",
+      "pakBytes": 426548,
+      "textures": 45,
+      "flats": 29,
+      "lines": 7069,
+      "sectors": 1519
+    }
+  }
+}

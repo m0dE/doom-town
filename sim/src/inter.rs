@@ -410,17 +410,24 @@ impl World {
         let splayer = if source != NONE && self.alive(source) { self.player_of(source) } else { None };
         if let Some(tp) = tplayer {
             // scoring: kills of others count +1, suicides and world deaths -1 (vanilla frags[])
+            // (killed by a monster: no frag lost, like vanilla)
+            let monster = if source != NONE && self.alive(source) && splayer.is_none() { self.mo(source).type_ as i32 } else { 0 };
             match splayer {
                 Some(sp) if sp != tp => self.players[sp].frags += 1,
+                _ if monster != 0 => {}
                 _ => self.players[tp].frags -= 1,
             }
             self.players[tp].deaths += 1;
-            self.score_death(tp, splayer);
+            if monster == 0 {
+                self.score_death(tp, splayer);
+            } else if self.mode() == crate::game::MODE_WAR {
+                self.score_death(tp, None);
+            }
             let killer = match splayer {
                 Some(sp) => sp as i32,
                 None => -1,
             };
-            self.emit(2, tp as i32, killer, mod_, 0, 0, 0, 0);
+            self.emit(2, tp as i32, killer, mod_, 0, 0, 0, monster);
             self.mo_mut(target).flags &= !MF_SOLID;
             self.players[tp].playerstate = PST_DEAD;
             self.players[tp].dead_tics = 0;
@@ -440,6 +447,9 @@ impl World {
         m.tics -= r;
         if m.tics < 1 {
             m.tics = 1;
+        }
+        if World::is_boss_type(type_) {
+            self.boss_killed(target, splayer);
         }
         // no monster drops in deathmatch without monsters
     }

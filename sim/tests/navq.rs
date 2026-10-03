@@ -55,3 +55,17 @@ fn point() {
     for k in 0..s.numlines { let sg = &map.segs[(s.firstline + k) as usize]; println!("  seg ({},{})->({},{}) line {} side {}", sg.v1.x>>16, sg.v1.y>>16, sg.v2.x>>16, sg.v2.y>>16, sg.linedef, sg.side); }
     for e in map.nav.edges_of(ss) { println!("   -> {} kind {} line {}", e.to, e.kind, e.line); }
 }
+
+#[test]
+#[ignore]
+fn boss_fit() {
+    for name in ["MAP19", "MAP24", "MAP20", "MAP30", "MAP27", "MAP32", "MAP01"] {
+        let map = load(name);
+        let fit = |r: i32, h: i32| map.spawn_spots.iter().filter(|sp| {
+            let (x, y) = ((sp.x as i32) << 16, (sp.y as i32) << 16);
+            let s = &map.sectors[map.sector_at(x, y)];
+            s.ceilingheight - s.floorheight >= h << 16 && doomsim::bots::nav::static_clear(&map, x, y, r << 16, false)
+        }).count();
+        println!("{}: {} spots; cyber fits {}, spider fits {}", name, map.spawn_spots.len(), fit(40, 110), fit(128, 100));
+    }
+}

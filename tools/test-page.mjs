@@ -41,7 +41,10 @@ try {
       const rows = await p.locator('.srv-row').count();
       check(rows >= 4, `server list shows the regional servers (${rows} rows)`);
       const logo = await p.evaluate(() => { const c = document.getElementById('logo'); return c.width > 100; });
-      check(logo, 'title graphic drawn from the WAD');
+      await p.waitForFunction(() => !!document.querySelector('canvas.doomguy-3d'), null, { timeout: 60000 }).catch(() => {});
+      check(logo, 'title drawn');
+      const hero = await p.evaluate(() => !!document.querySelector('canvas.doomguy-3d'));
+      check(hero, 'the 3D marine is on the start screen');
     }
     await p.close();
   }
@@ -101,6 +104,13 @@ try {
   const pauseOpen = await page.evaluate(() => !!document.querySelector('.pause:not(.hidden)'));
   check(pauseOpen, 'Esc opens the menu');
   await page.screenshot({ path: path.join(SHOTS, 'game-menu.png') });
+  // Players: Classic sprites / 3D, persisted
+  await page.click('.pause [data-players="sprites"]');
+  const sprites = await page.evaluate(() => JSON.parse(localStorage.getItem('freedm.prefs')).players === 'sprites' && window.__game.debug().render.bodies3d === 0);
+  await page.click('.pause [data-players="3d"]');
+  await page.waitForTimeout(800);
+  const back3d = await page.evaluate(() => JSON.parse(localStorage.getItem('freedm.prefs')).players === '3d');
+  check(sprites && back3d, 'Esc menu switches players between classic sprites and 3D, and keeps it');
   if (pauseOpen) await page.click('.pause [data-act="leave"]');
   await page.waitForTimeout(600);
   const back = await page.evaluate(() => !document.getElementById('menu').classList.contains('hidden') && !window.__game);

@@ -105,7 +105,7 @@ export class DoomSim {
   deserialize(bytes: Uint8Array): number {
     const ptr = this.ex.alloc(bytes.length);
     new Uint8Array(this.ex.memory.buffer, ptr, bytes.length).set(bytes);
-    const h = this.ex.world_deserialize(this.mapId, ptr, bytes.length);
+    const h = this.ex.world_deserialize(ptr, bytes.length);
     this.ex.dealloc(ptr, bytes.length);
     if (h <= 0) throw new Error('world_deserialize refused the snapshot');
     this.live.add(h);
@@ -127,7 +127,7 @@ export class DoomSim {
 
   /** count × 12 words (MobjView). */
   mobjs(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_mobjs(h), MOBJ_WORDS); }
-  /** One PlayerView (48 words). */
+  /** One PlayerView (PLAYER_WORDS = 51 words in v2). */
   player(h: number, slot: number): Int32Array { return copyI32(this.ex, this.ex.world_view_player(h, slot), PLAYER_WORDS); }
   /** count(=slots) × 8 words (PlayerRow). */
   players(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_players(h), ROW_WORDS); }
@@ -201,8 +201,11 @@ export interface DoomApp extends lockstep.Sim<DoomState, unknown> {
   readonly stats: { clones: number; decodes: number; encodes: number };
 }
 
-/** The room namespace suffix; Lockstep rooms are `${room}-${APP_NAME}`. */
-export const APP_NAME = 'freedm';
+/**
+ * The lockstep app's name, and the room namespace suffix: rooms are `${room}-${APP_NAME}`.
+ * One constant for both (src/menu/rooms.ts imports it), so they cannot drift apart.
+ */
+export const APP_NAME = 'doom-town';
 
 export function ticsPerFrameFor(fps: number): number {
   return Math.max(1, Math.round(TICRATE / Math.max(1, fps)));

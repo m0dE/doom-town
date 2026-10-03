@@ -241,6 +241,7 @@ pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
         return 0;
     }
     let seed = if n > 11 + count { w[11 + count] } else { 0 };
+    let flags = if n > 12 + count { w[12 + count] } else { 0 };
     let cfg = crate::game::Config {
         mode: w[1],
         slots: w[2],
@@ -251,6 +252,7 @@ pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
         rounds_to_win: w[7],
         tickets: w[8],
         friendly_fire: w[9] != 0,
+        flags,
     };
     with(|s| {
         let mut maps = Vec::new();
@@ -300,6 +302,9 @@ pub extern "C" fn world_view_match(h: u32) -> *const u8 {
             for q in [x, y, r, p.owner, p.progress * 100 / crate::game::CAP_FULL, p.flags] {
                 put_i32(v, q);
             }
+        }
+        for q in w.boss_view() {
+            put_i32(v, q);
         }
         v.as_ptr()
     })

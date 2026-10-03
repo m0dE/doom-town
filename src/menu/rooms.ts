@@ -8,7 +8,8 @@
  * id, never below the humans actually connected, so two clients agree and a
  * row keeps its character between refreshes.
  *
- * Room ids are namespaced: the netcode joins `${room}-freedm`. The list shows
+ * Room ids are namespaced: the netcode joins `${room}-doom-town` (APP_NAME, the
+ * lockstep app's own name too). The list shows
  * the friendly half.
  */
 import { listRooms, type RoomInfo } from 'arrr-network';

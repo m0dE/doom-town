@@ -4,6 +4,7 @@
  *
  *   npm run export                    # typecheck, build, zip into export/
  *   npm run export -- --no-build      # re-zip what is already in export/doom-town
+ *   npm run export -- --unpublished   # allow uncommitted or unpushed work (not for upload)
  *
  * Writes:
  *   export/doom-town/          the site (index.html at its root, relative URLs only)
@@ -11,8 +12,9 @@
  *   export/BUILD.txt        what this build is: commit, app id, sizes, sha256
  *
  * The site carries LICENSE.txt and the Freedoom data's COPYING and CREDITS;
- * the start screen's footer links the source to the public repository,
- * https://github.com/m0dE/doom-town.
+ * the start screen's footer links the source of exactly this build, the built
+ * commit on https://github.com/m0dE/doom-town - which is why export refuses a
+ * dirty tree or a commit that is not pushed.
  *
  * arrr.fun's rules, checked here before an upload rather than after: index.html
  * at the zip root, at most 5000 files and 100 MiB inflated, no absolute asset
@@ -58,6 +60,16 @@ let head = 'dev';
 try { head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { /* not a checkout */ }
 let dirty = false;
 try { dirty = execFileSync('git', ['status', '--porcelain', '--', '.'], { cwd: ROOT, encoding: 'utf8' }).trim() !== ''; } catch { /* not a checkout */ }
+
+// GPL-2.0 §3: the footer's Source code link points at this commit on GitHub, so only
+// publish what is committed and pushed there - otherwise that link is not the source.
+if (!flag('unpublished')) {
+  if (head === 'dev') fail('not a git checkout, so the footer cannot link this build\'s source (--unpublished to build anyway)');
+  if (dirty) fail('uncommitted changes would not be in the linked source on GitHub; commit and push first (--unpublished to build anyway)');
+  let pushed = '';
+  try { pushed = execFileSync('git', ['branch', '-r', '--contains', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { /* no remote */ }
+  if (!pushed) fail(`commit ${head} is not on any remote branch; push it first so the footer's source link resolves (--unpublished to build anyway)`);
+}
 
 // ---------------------------------------------------------------------------- check
 

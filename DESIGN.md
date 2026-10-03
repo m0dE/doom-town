@@ -22,8 +22,9 @@ first, then the code.
   artwork, keep "Game art: Freedoom" visible, and the README carries the
   not-affiliated line. Directory and code identifiers may say `doom`.
 - The published bundle carries `LICENSE.txt` and `COPYING-FREEDOOM.txt`; the menu's
-  footer links the source to the public repo, github.com/m0dE/doom-town (no bundled
-  source zip).
+  footer's Source code link goes to the built commit on github.com/m0dE/doom-town (no
+  bundled source zip). `npm run export` refuses uncommitted or unpushed work so that link
+  is always the build's exact source; the repo must stay public.
 
 ## Layout
 

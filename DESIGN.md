@@ -463,3 +463,11 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   nothing on the wire (they run inside every client's sim).
 - Snapshots every 35 × 10 tics.
 - Prediction: whole-world, via `world_clone`.
+- Measured 2026-10-03 (`node tools/test-mp.mjs --players=3 --seconds=180`, local
+  cluster, three headless pages joining at the same instant, each running, strafing,
+  turning, jumping and firing): 35.0–35.4 tics/s on every page, RTT 0–15 ms, playout
+  delay 0–50 ms, prediction lead 1–3 tics, ~70 rollbacks/min per page, 0 desyncs.
+  World hashes compared on every shared hashed frame every 5 s: 4657/4657 agree; same
+  slots and the same frag total (2074) on all three. A page that joins catches up at
+  ~360 tics/s for its first seconds. (Render fps in that test is not meaningful: three
+  pages share one software-GL CPU.)

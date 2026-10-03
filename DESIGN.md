@@ -174,7 +174,7 @@ counts? they seem to get stuck too often".
   pass through each other (PIT_CheckThing ignores player vs player); missiles, hitscan,
   monsters, pickups and telefrags are unchanged. On by default in War rooms; any room
   name can turn it on with `ghost` / `ghosts` / `nocollide` (`na-tdm-ghost-1`) or off with
-  `solid` / `collide` (`my-war-solid`). Server rows show a "No collision" badge.
+  `solid` / `collide` (`my-war-solid`).
 - sim_version 7 (both changes alter the simulation).
 
 ### ABI additions (v2)

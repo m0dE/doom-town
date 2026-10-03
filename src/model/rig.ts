@@ -15,6 +15,7 @@
  */
 import * as THREE from 'three';
 import type { PaletteData } from '../wad/index.js';
+import MESHES from './meshes.json';
 import { SpriteSource, cutRect, packAtlas, resample, shadeIndex, type FaceSpec, type FaceSource, type IndexImage, type Rect } from './texture.js';
 
 export const BONES = [
@@ -79,7 +80,7 @@ const mirrorZ = (b: BoxDef, name: string, bone: number, faces: Faces): BoxDef =>
   max: [b.max[0], b.max[1], -b.min[2]],
 });
 
-function defineBoxes(): BoxDef[] {
+export function defineBoxes(): BoxDef[] {
   const boxes: BoxDef[] = [];
   const add = (b: BoxDef) => { boxes.push(b); return b; };
 
@@ -274,41 +275,60 @@ export function buildRig(src: SpriteSource, pal: PaletteData): BuiltRig {
 
   const atlas = packAtlas(images, 128);
   // ---- geometry -------------------------------------------------------------
-  const nFaces = boxes.length * 6;
-  const pos = new Float32Array(nFaces * 4 * 3);
-  const nor = new Float32Array(nFaces * 4 * 3);
-  const uv = new Float32Array(nFaces * 4 * 2);
-  const skinIndex = new Uint16Array(nFaces * 4 * 4);
-  const skinWeight = new Float32Array(nFaces * 4 * 4);
-  const bright = new Float32Array(nFaces * 4);
+  // A part with a modelled mesh (src/model/meshes.json, built in Blender by
+  // tools/model/build_parts.py) is textured by box projection: each triangle takes
+  // the face of the part's bounds its normal points at most, and its texels from
+  // that face's sprite cut. A part without one is the plain box.
+  const P: number[] = [], N: number[] = [], UV: number[] = [], SI: number[] = [], BR: number[] = [];
   const index: number[] = [];
-  let fi = 0, ri = 0;
+  let ri = 0;
+  const vert = (p: V3, n: V3, u: number, v: number, bone: number, bright: number) => {
+    P.push(p[0], p[1], p[2]); N.push(n[0], n[1], n[2]); UV.push(u, v); SI.push(bone); BR.push(bright);
+    return P.length / 3 - 1;
+  };
   boxes.forEach((b, bi) => {
     const c: V3 = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
     const half: V3 = [(b.max[0] - b.min[0]) / 2, (b.max[1] - b.min[1]) / 2, (b.max[2] - b.min[2]) / 2];
-    for (const f of perBox[bi]) {
-      const fr = FACE_FRAMES[f.key];
-      const r = atlas.rects[ri++];
-      const hn = dot(absv(fr.n), half);
-      // corners: TL, BL, BR, TR in (u, v) ∈ {0,1}²
-      const corners: [number, number][] = [[0, 0], [0, 1], [1, 1], [1, 0]];
-      corners.forEach(([u, v], k) => {
-        const vi = fi * 4 + k;
-        for (let a = 0; a < 3; a++) {
-          pos[vi * 3 + a] = c[a] + fr.n[a] * hn + fr.u[a] * (u - 0.5) * f.sizeU + fr.v[a] * (v - 0.5) * f.sizeV;
-          nor[vi * 3 + a] = fr.n[a];
+    const rects = perBox[bi].map(() => atlas.rects[ri++]);
+    const mesh = (MESHES as Record<string, { p: number[]; i: number[] } | undefined>)[b.name];
+    if (mesh) {
+      for (let t = 0; t < mesh.i.length; t += 3) {
+        const q = [0, 1, 2].map((k) => { const o = mesh.i[t + k] * 3; return [mesh.p[o], mesh.p[o + 1], mesh.p[o + 2]] as V3; });
+        const e1: V3 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]];
+        const e2: V3 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]];
+        const n: V3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        const len = Math.hypot(n[0], n[1], n[2]);
+        if (len < 1e-9) continue;
+        n[0] /= len; n[1] /= len; n[2] /= len;
+        let fk = 0, best = -Infinity;
+        perBox[bi].forEach((f, k) => { const d = dot(FACE_FRAMES[f.key].n, n); if (d > best) { best = d; fk = k; } });
+        const f = perBox[bi][fk], fr = FACE_FRAMES[f.key], r = rects[fk];
+        for (const p of q) {
+          const d: V3 = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+          // clamp half a texel inside the cut, so nothing samples a neighbour in the atlas
+          const iu = 0.5 / r.w, iv = 0.5 / r.h;
+          const u = Math.min(1 - iu, Math.max(iu, dot(d, fr.u) / f.sizeU + 0.5));
+          const v = Math.min(1 - iv, Math.max(iv, dot(d, fr.v) / f.sizeV + 0.5));
+          index.push(vert(p, n, (r.x + u * r.w) / atlas.w, (r.y + v * r.h) / atlas.h, b.bone, b.bright ? 1 : 0));
         }
-        uv[vi * 2] = (r.x + u * r.w) / atlas.w;
-        uv[vi * 2 + 1] = (r.y + v * r.h) / atlas.h;
-        skinIndex[vi * 4] = b.bone;
-        skinWeight[vi * 4] = 1;
-        bright[vi] = b.bright ? 1 : 0;
-      });
-      const o = fi * 4;
-      index.push(o, o + 1, o + 2, o, o + 2, o + 3);
-      fi++;
+      }
+      return;
     }
+    perBox[bi].forEach((f, k) => {
+      const fr = FACE_FRAMES[f.key];
+      const r = rects[k];
+      const hn = dot(absv(fr.n), half);
+      const ids = ([[0, 0], [0, 1], [1, 1], [1, 0]] as [number, number][]).map(([u, v]) => {
+        const p: V3 = [0, 0, 0];
+        for (let a = 0; a < 3; a++) p[a] = c[a] + fr.n[a] * hn + fr.u[a] * (u - 0.5) * f.sizeU + fr.v[a] * (v - 0.5) * f.sizeV;
+        return vert(p, fr.n, (r.x + u * r.w) / atlas.w, (r.y + v * r.h) / atlas.h, b.bone, b.bright ? 1 : 0);
+      });
+      index.push(ids[0], ids[1], ids[2], ids[0], ids[2], ids[3]);
+    });
   });
+  const pos = new Float32Array(P), nor = new Float32Array(N), uv = new Float32Array(UV), bright = new Float32Array(BR);
+  const skinIndex = new Uint16Array(SI.length * 4), skinWeight = new Float32Array(SI.length * 4);
+  SI.forEach((bone, k) => { skinIndex[k * 4] = bone; skinWeight[k * 4] = 1; });
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));

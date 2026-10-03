@@ -31,8 +31,13 @@
       <div class="ident">
         <label for="name">Your name</label>
         <input id="name" type="text" maxlength="20" autocomplete="nickname" spellcheck="false">
-        <div id="swatches" class="swatches" role="radiogroup" aria-label="Armor color"></div>
-        <div id="color-name" class="color-name"></div>
+        <div class="customize">
+          <button id="customize-btn" class="btn small ghosted" type="button" aria-expanded="false" aria-controls="customize-pop">Customize</button>
+          <div id="customize-pop" class="customize-pop panel" hidden>
+            <div id="swatches" class="swatches" role="radiogroup" aria-label="Armor color"></div>
+            <div id="color-name" class="color-name"></div>
+          </div>
+        </div>
       </div>
     </section>
 

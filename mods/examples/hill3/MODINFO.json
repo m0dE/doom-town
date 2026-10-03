@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "id": "hill3",
+  "title": "Three Hills",
+  "author": "Doom Town examples",
+  "license": "CC0-1.0",
+  "description": "16 v 16 war in a small valley: two watchtowers and the hill between them. The modding guide's second example.",
+  "mode": "war",
+  "map": "HILL3",
+  "slots": 32,
+  "ghosts": true,
+  "rules": { "matchSeconds": 900, "tickets": 800 }
+}

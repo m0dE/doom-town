@@ -10,16 +10,20 @@ import { MODES, type ModeKey } from './modes.js';
 import { mapTitle } from '../sim/maps.js';
 
 /** The list's tabs: every room, one per mode, and the random-boss rooms on their own. */
-type Tab = 'all' | ModeKey | 'boss';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'dm', label: MODES.dm.label },
-  { id: 'tdm', label: 'Team DM' },
-  { id: 'elim', label: MODES.elim.label },
-  { id: 'war', label: 'War' },
-  { id: 'boss', label: 'Bosses' },
+type Tab = 'all' | ModeKey | 'boss' | 'mod';
+const TABS: { id: Tab; label: string; title: string }[] = [
+  { id: 'all', label: 'All', title: 'Every room' },
+  { id: 'dm', label: 'DM', title: MODES.dm.label },
+  { id: 'tdm', label: 'Team DM', title: MODES.tdm.label },
+  { id: 'elim', label: 'Elim', title: MODES.elim.label },
+  { id: 'war', label: 'War', title: MODES.war.label },
+  { id: 'br', label: 'Royale', title: MODES.br.label },
+  { id: 'boss', label: 'Bosses', title: 'Random bosses' },
+  { id: 'mod', label: 'Mods', title: 'Rooms playing a mod' },
 ];
-const tabOf = (r: RoomRow): Tab => (r.game.bosses ? 'boss' : r.game.mode.key);
+/** A room named after a mod (`na-mod-arena-1`); battle royale rooms play br01 but list as BR. */
+const isModRoom = (r: RoomRow): boolean => !!r.game.mod && r.game.kind.startsWith('mod-');
+const tabOf = (r: RoomRow): Tab => (isModRoom(r) ? 'mod' : r.game.bosses ? 'boss' : r.game.mode.key);
 const inTab = (r: RoomRow, t: Tab): boolean => t === 'all' || tabOf(r) === t;
 
 const REFRESH_SECONDS = 20;
@@ -94,7 +98,7 @@ export class ServerBrowser {
     if (this.tabs) {
       this.tabs.innerHTML = TABS.map((t) => {
         const n = this.rows.filter((r) => inTab(r, t.id)).reduce((a, r) => a + r.players, 0);
-        return `<button type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === this.tab}">${esc(t.label)}<small>${n}</small></button>`;
+        return `<button type="button" role="tab" data-tab="${t.id}" title="${esc(t.title)}" aria-selected="${t.id === this.tab}">${esc(t.label)}<small>${n}</small></button>`;
       }).join('');
     }
     const mine = this.rows.filter((r) => inTab(r, this.tab));
@@ -110,8 +114,8 @@ export class ServerBrowser {
     return `
       <div class="srv-row" data-room="${esc(r.name)}" tabindex="0" role="button" aria-label="Join ${esc(r.name)}">
         <span class="srv-name">${esc(r.name)}</span>
-        <span class="srv-mode">${esc(r.game.mode.short)}${r.game.bosses ? ' <em class="badge boss">Bosses</em>' : ''}</span>
-        <span class="srv-map">${esc(mapTitle(r.map))}</span>
+        <span class="srv-mode">${esc(r.game.mode.short)}${r.game.bosses ? ' <em class="badge boss">Bosses</em>' : ''}${isModRoom(r) ? ' <em class="badge mod">MOD</em>' : ''}</span>
+        <span class="srv-map">${isModRoom(r) ? `${esc(r.game.mod!.title)} <small class="by">by ${esc(r.game.mod!.author)}</small>` : esc(mapTitle(r.map))}</span>
         <span class="srv-pop"><b>${r.players}</b> / ${r.capacity}</span>
         <span class="srv-age">${esc(formatAge(r.ageSeconds))}</span>
         <span class="srv-join">Join</span>

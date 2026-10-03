@@ -7,6 +7,7 @@ import {
   decodePatch, isPatch, patchLoader, readPalette, textureDefs, NUM_COLORMAPS, NUM_PALETTES,
   type PaletteData, type Picture, type SpriteDef, type Wad,
 } from '../wad';
+import { injectBrSprites } from './br/sprites';
 
 export interface AtlasRect { x: number; y: number; w: number; h: number }
 
@@ -171,6 +172,7 @@ export class RenderAssets {
     }
 
     // ---- sprites ---------------------------------------------------------------
+    injectBrSprites(wad, this.pal);
     this.spriteDefs = buildSpriteDefs(wad, SPRITE_NAMES);
     const lumpNames: string[] = [];
     const spics: Picture[] = [];

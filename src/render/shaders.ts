@@ -55,7 +55,9 @@ float flatLevel(float light, float depth) {
 }
 float albedoLevel() { return uFixedCmap >= 0.0 ? uFixedCmap : 0.0; }
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-float viewDepth(vec3 wp) { return dot(wp.xy - uCamPos.xy, uCamFwd); }
+// Doom's depth is along the view on the ground plane; seen from far above (battle royale's
+// dropship) the vertical distance counts too, so the town below is distance-lit
+float viewDepth(vec3 wp) { return max(dot(wp.xy - uCamPos.xy, uCamFwd), abs(wp.z - uCamPos.z) - 256.0); }
 
 #ifndef IS_VERTEX
 vec3 dynLight(vec3 wp, vec3 n, int sector, float wrap) {
@@ -269,6 +271,9 @@ void main() {
   }
   vWorld = vec3(position.xy, z);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(vWorld, 1.0);
+  // the sky is infinitely far: written at the far plane, so whatever flies above the sky
+  // ceiling (battle royale's dropship, parachuters) is drawn over it, as Doom would
+  gl_Position.z = gl_Position.w * 0.999999;
 }
 `;
 
@@ -496,6 +501,7 @@ uniform sampler2D uBloom;
 uniform float uBloomStrength;
 uniform float uTime;
 uniform float uGrain;
+uniform float uStorm;   // 0..1: the camera is outside battle royale's zone
 in vec2 vUv;
 out vec4 fragColor;
 vec3 shoulder(vec3 c) {
@@ -516,6 +522,16 @@ vec3 toSRGB(vec3 c) {
 float hash(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 void main() {
   vec3 c = texture(uScene, vUv).rgb + texture(uBloom, vUv).rgb * uBloomStrength;
+  if (uStorm > 0.0) {
+    // inside the storm: desaturated purple, darker toward the edges, breathing
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    vec2 q = vUv - 0.5;
+    float vig = smoothstep(0.25, 0.75, length(q * vec2(1.3, 1.0)));
+    float pulse = 0.85 + 0.15 * sin(uTime * 2.4);
+    vec3 storm = l * vec3(0.72, 0.48, 1.25) + vec3(0.035, 0.008, 0.07) * pulse;
+    storm = mix(storm, vec3(0.16, 0.03, 0.30) * pulse, vig * 0.6);
+    c = mix(c, storm, uStorm * 0.75);
+  }
   c = toSRGB(shoulder(c));
   c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * uGrain;
   fragColor = vec4(c, 1.0);

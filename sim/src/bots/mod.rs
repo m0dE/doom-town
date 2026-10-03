@@ -83,6 +83,12 @@ pub struct Bot {
     pub pitch: i32,
     /// war: the capture point being worked on (-1 none)
     pub goal_point: i32,
+    /// battle royale: where to land, and the ship's tics-left at which to jump
+    pub drop_x: Fixed,
+    pub drop_y: Fixed,
+    pub drop_t: i32,
+    /// just landed: no fights started before this tic (unless shot or better armed)
+    pub calm_until: u32,
 }
 
 impl Bot {
@@ -233,7 +239,35 @@ fn set_cmd(w: &mut World, slot: usize, yaw: Angle, pitch: i32, forward: i32, sid
     p.cmd = Cmd { yaw: (cy >> 16) as u16, pitch: (pitch >> 16) as i16, forward: forward.clamp(-50, 50) as i8, side: side.clamp(-40, 40) as i8, buttons };
 }
 
+/// battle royale: in the ship, jump over the chosen spot; falling, steer to it
+fn think_air(w: &mut World, slot: usize) {
+    let p = &w.players[slot];
+    let (ax, ay) = (p.ax, p.ay);
+    let (tx, ty, t) = (p.bot.drop_x, p.bot.drop_y, p.bot.drop_t);
+    if p.air == crate::drop::AIR_SHIP {
+        let go = w.g.ship.left <= t && w.tic.is_multiple_of(2);
+        let yaw = w.g.ship.angle;
+        set_cmd(w, slot, yaw, 0, 0, 0, if go { BT_JUMP } else { 0 });
+        return;
+    }
+    let yaw = point_to_angle2(ax, ay, tx, ty);
+    let fwd = if dist(ax, ay, tx, ty) > 48 { 50 } else { 0 };
+    set_cmd(w, slot, yaw, 0, fwd, 0, 0);
+}
+
 fn think(w: &mut World, slot: usize, budget: &mut i32) {
+    if w.players[slot].air != 0 {
+        return think_air(w, slot);
+    }
+    if !w.players[slot].vehicle.is_null() {
+        // bots don't drive: get out (a human left this slot at the wheel)
+        if let Some(h) = w.deref(w.players[slot].mo) {
+            let yaw = w.mo(h).angle;
+            let b = if w.tic.is_multiple_of(2) { BT_USE } else { 0 };
+            set_cmd(w, slot, yaw, 0, 0, 0, b);
+        }
+        return;
+    }
     let h = match w.deref(w.players[slot].mo) {
         Some(h) => h,
         None => {
@@ -247,7 +281,7 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         let p = &w.players[slot];
         let want = p.dead_tics >= RESPAWN_MIN_TICS + p.bot.respawn_delay;
         let mut b = 0u16;
-        if want && tic.is_multiple_of(2) && w.mode() != crate::game::MODE_ELIM {
+        if want && tic.is_multiple_of(2) && w.mode() != crate::game::MODE_ELIM && w.mode() != crate::game::MODE_BR {
             b = BT_ATTACK;
         }
         if w.mode() == crate::game::MODE_WAR {
@@ -320,7 +354,16 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         Some(d) => w.players[slot].bot.goal_item.h != d && (tic + slot as u32).is_multiple_of(35) && dist(x, y, w.mo(d).x, w.mo(d).y) < 4000,
         None => false,
     };
-    if goal_gone || drop_race || tic >= w.players[slot].bot.next_goal_tic || w.players[slot].bot.goal_node < 0 {
+    // battle royale: outside the zone, getting in comes first
+    let urgent = br_urgent(w, x, y);
+    let zone_redirect = match urgent {
+        Some((cx, cy, r)) => (tic + slot as u32).is_multiple_of(35) && {
+            let b = &w.players[slot].bot;
+            !b.goal_item.is_null() || !crate::royale::inside(b.goal_x, b.goal_y, cx, cy, r)
+        },
+        None => false,
+    };
+    if goal_gone || drop_race || zone_redirect || tic >= w.players[slot].bot.next_goal_tic || w.players[slot].bot.goal_node < 0 {
         choose_goal(w, slot, h);
         w.players[slot].bot.need_plan = true;
     }
@@ -439,6 +482,24 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         break;
     }
     let _ = (step_line, step_kind);
+    // battle royale: a crate as the goal: walk up, face it, press use
+    if let Some(c) = w.deref(w.players[slot].bot.goal_item) {
+        let m = w.mo(c);
+        if m.type_ as usize == mt::CRATE {
+            let (cx, cy) = (m.x, m.y);
+            let d = dist(x, y, cx, cy);
+            if d < 160 {
+                tx = cx;
+                ty = cy;
+                if d < 100 {
+                    want_use = true;
+                }
+                if d < 56 {
+                    wait = true;
+                }
+            }
+        }
+    }
     // standing on a lift that is moving: wait
     {
         let cur_sec = map.subsectors[ss as usize].sector as usize;
@@ -556,6 +617,16 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         yaw_target = exact.wrapping_add(b.err_yaw as u32);
         pitch_target = pitch_to(d << FRACBITS, aimz - eyez).wrapping_add(b.err_pitch).clamp(-MAX_PITCH, MAX_PITCH);
         face_enemy = true;
+        // battle royale: scope in with the sniper at range; a grenade now and then
+        if w.is_br() && visible {
+            if rw == WP_SNIPER && d > 300 {
+                buttons |= crate::royale::BT_ZOOM;
+            }
+            if w.players[slot].grenades > 0 && (250..700).contains(&d) && w.players[slot].bot.rng.chance(1, 40) {
+                buttons |= crate::royale::BT_GRENADE;
+            }
+        }
+        let b = &w.players[slot].bot;
         // fire when lined up
         if visible && b.react_left == 0 {
             // the bot fires when its crosshair is where it *thinks* the target is (aim
@@ -570,7 +641,7 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
             if (rw == WP_FIST || rw == WP_CHAINSAW) && d > 90 {
                 ok = false;
             }
-            if d > 2000 && rw != WP_CHAINGUN && rw != WP_PISTOL {
+            if d > 2000 && rw != WP_CHAINGUN && rw != WP_PISTOL && rw != WP_SNIPER {
                 ok = false;
             }
             fire = ok;
@@ -598,7 +669,7 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
             // badly armed or hurt: keep running the route (to a weapon / health) while
             // shooting back; otherwise dance with the enemy
             let weak = rw == WP_PISTOL || rw == WP_FIST;
-            let keep_route = (low || weak) && !b.path.is_empty();
+            let keep_route = (low || weak || urgent.is_some()) && !b.path.is_empty();
             if !keep_route {
                 // approach / back off relative to the enemy direction, strafing across it
                 let towards = point_to_angle2(x, y, ex, ey);
@@ -686,7 +757,7 @@ fn finish(w: &mut World, slot: usize, h: u32, cur_angle: Angle, yaw_target: Angl
         side = 0;
     }
     if fire {
-        if rw == WP_MISSILE || rw == WP_BFG || rw == WP_PISTOL || rw == WP_SHOTGUN {
+        if rw == WP_MISSILE || rw == WP_BFG || rw == WP_PISTOL || rw == WP_SHOTGUN || rw == WP_SNIPER {
             // semi-automatic: tap the trigger
             b.fire_toggle = !b.fire_toggle;
             if b.fire_toggle || rw == WP_SHOTGUN || rw == WP_PISTOL {
@@ -719,6 +790,8 @@ fn acquire_enemy(w: &mut World, slot: usize, h: u32) {
     let tic = w.tic;
     let mut cands: Vec<(i32, u32)> = Vec::new();
     let hurt_by = w.deref(w.players[slot].bot.hurt_by);
+    let rw = w.players[slot].readyweapon;
+    let calm = tic < w.players[slot].bot.calm_until && (rw == WP_PISTOL || rw == WP_FIST);
     let mut near = Vec::new();
     players_near(w, x, y, 3000, &mut near);
     for j in near {
@@ -730,6 +803,9 @@ fn acquire_enemy(w: &mut World, slot: usize, h: u32) {
             None => continue,
         };
         if w.players[j].playerstate != PST_LIVE {
+            continue;
+        }
+        if calm && Some(e) != hurt_by {
             continue;
         }
         let m = w.mo(e);
@@ -874,6 +950,15 @@ fn weapon_score(w: &World, slot: usize, wp: i32, d: i32) -> i32 {
                 88
             }
         }
+        WP_SNIPER => {
+            if d > 800 {
+                95
+            } else if d > 400 {
+                75
+            } else {
+                20
+            }
+        }
         _ => 0,
     }
 }
@@ -882,6 +967,7 @@ fn weapon_key(wp: i32) -> u16 {
     match wp {
         WP_CHAINSAW => 8,
         WP_SUPERSHOTGUN => 9,
+        WP_SNIPER => 2,
         w => (w + 1) as u16,
     }
 }
@@ -906,7 +992,7 @@ fn choose_weapon(w: &mut World, slot: usize, edist: i32, buttons: &mut u16) {
     let cur_score = weapon_score(w, slot, cur, d);
     let mut best = cur;
     let mut best_score = cur_score;
-    for wp in 0..9 {
+    for wp in 0..NUMWEAPONS as i32 {
         let sc = weapon_score(w, slot, wp, d);
         if sc > best_score + 8 {
             best = wp;
@@ -914,8 +1000,11 @@ fn choose_weapon(w: &mut World, slot: usize, edist: i32, buttons: &mut u16) {
         }
     }
     if best != cur {
-        // plain shotgun is selected through the SSG toggle; skip that case
+        // plain shotgun / pistol are selected through the SSG / sniper toggles; skip
         if best == WP_SHOTGUN && w.players[slot].weaponowned[WP_SUPERSHOTGUN as usize] {
+            return;
+        }
+        if best == WP_PISTOL && w.players[slot].weaponowned[WP_SNIPER as usize] {
             return;
         }
         let k = weapon_key(best);
@@ -963,6 +1052,13 @@ fn item_value(w: &World, slot: usize, t: usize) -> i32 {
         x if x == mt::MISC22 => if (owns(WP_SHOTGUN) || owns(WP_SUPERSHOTGUN)) && low(AM_SHELL) { 16 } else { 2 },
         x if x == mt::MISC23 => if (owns(WP_SHOTGUN) || owns(WP_SUPERSHOTGUN)) && low(AM_SHELL) { 26 } else { 4 },
         x if x == mt::MISC24 => if p.backpack { 8 } else { 40 },
+        x if x == mt::SNIPERRIFLE => if owns(WP_SNIPER) { if low(AM_CLIP) { 10 } else { 0 } } else { 70 },
+        x if x == mt::GRENADEPACK => if p.grenades < crate::vehicle::GRENADE_MAX { 25 } else { 0 },
+        // battle royale crate: worth more to a poorly armed or hurt bot
+        x if x == mt::CRATE => {
+            let armed = owns(WP_SHOTGUN) || owns(WP_SUPERSHOTGUN) || owns(WP_CHAINGUN) || owns(WP_MISSILE) || owns(WP_PLASMA);
+            (if armed { 30 } else { 70 }) + need_hp / 3
+        }
         _ => 0,
     }
 }
@@ -975,6 +1071,13 @@ fn best_item(w: &mut World, slot: usize, h: u32, maxd: i32) -> Option<(i64, u32)
     let map = w.map.clone();
     let nav = &map.nav;
     let mut best: Option<(i64, u32)> = None;
+    // battle royale: only what lies inside the current circle
+    let zone = if w.is_br() && w.g.phase == crate::game::PH_PLAY {
+        let z = &w.g.zone;
+        Some((z.x, z.y, z.r))
+    } else {
+        None
+    };
     let mut k = 0usize;
     while k < w.order.len() {
         let o = w.order[k];
@@ -983,12 +1086,17 @@ fn best_item(w: &mut World, slot: usize, h: u32, maxd: i32) -> Option<(i64, u32)
             continue;
         }
         let m = w.mo(o);
-        if m.flags & MF_SPECIAL == 0 {
+        if m.flags & MF_SPECIAL == 0 && m.type_ as usize != mt::CRATE {
             continue;
         }
         let d = dist(x, y, m.x, m.y);
         if d > maxd {
             continue;
+        }
+        if let Some((zx, zy, zr)) = zone {
+            if !crate::royale::inside(m.x, m.y, zx, zy, zr) {
+                continue;
+            }
         }
         if !nav.reach[m.subsector as usize] && !nav.reach[ss as usize] {
             // both outside the main area: allow (same pocket); otherwise skip pockets
@@ -1038,7 +1146,99 @@ fn choose_goal(w: &mut World, slot: usize, h: u32) {
     match w.mode() {
         crate::game::MODE_ELIM => elim_goal(w, slot, h),
         crate::game::MODE_WAR => war_goal(w, slot, h),
+        crate::game::MODE_BR => br_goal(w, slot, h),
         _ => dm_goal(w, slot, h),
+    }
+}
+
+/// battle royale: the circle a bot at (x, y) must get into now, if it is outside it:
+/// the next circle while waiting, the current one while shrinking (or closed)
+fn br_urgent(w: &World, x: Fixed, y: Fixed) -> Option<(Fixed, Fixed, Fixed)> {
+    if !w.is_br() || w.g.phase != crate::game::PH_PLAY {
+        return None;
+    }
+    let z = &w.g.zone;
+    let waiting = z.state == crate::royale::ZS_WAIT;
+    let (cx, cy, r) = if waiting { (z.nx, z.ny, z.nr) } else { (z.x, z.y, z.r) };
+    if crate::royale::inside(x, y, cx, cy, r) {
+        return None;
+    }
+    if waiting {
+        // outside the next circle: only once the wait is nearly over for the trip
+        // (10 units/tic over the distance to its edge, plus 15 s)
+        let d = dist(x, y, cx, cy) - (r >> FRACBITS);
+        if z.left > d / 10 + 35 * 15 {
+            return None;
+        }
+    }
+    Some((cx, cy, r))
+}
+
+/// one of the 8 spawn spots inside the circle nearest to (x, y) (bot rng), else its centre
+fn spot_toward(w: &mut World, slot: usize, x: Fixed, y: Fixed, cx: Fixed, cy: Fixed, r: Fixed) -> (Fixed, Fixed) {
+    let map = w.map.clone();
+    let mut list: Vec<(i32, usize)> = (0..map.spawn_spots.len())
+        .filter_map(|i| {
+            let s = map.spawn_spots[i];
+            let (sx, sy) = ((s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS);
+            if crate::royale::inside(sx, sy, cx, cy, r) {
+                Some((dist(x, y, sx, sy), i))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if list.is_empty() {
+        return (cx, cy);
+    }
+    list.sort_unstable();
+    let k = w.players[slot].bot.rng.below(list.len().min(8) as u32) as usize;
+    let s = map.spawn_spots[list[k].1];
+    ((s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS)
+}
+
+/// a spawn spot inside the circle (bot rng), else its centre
+fn spot_in_circle(w: &mut World, slot: usize, cx: Fixed, cy: Fixed, r: Fixed) -> (Fixed, Fixed) {
+    let map = w.map.clone();
+    let list: Vec<usize> = (0..map.spawn_spots.len())
+        .filter(|&i| {
+            let s = map.spawn_spots[i];
+            crate::royale::inside((s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS, cx, cy, r)
+        })
+        .collect();
+    if list.is_empty() {
+        return (cx, cy);
+    }
+    let s = map.spawn_spots[list[w.players[slot].bot.rng.below(list.len() as u32) as usize]];
+    ((s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS)
+}
+
+/// battle royale: get into the zone first; then loot (crates and items) inside the circle,
+/// else roam inside it
+fn br_goal(w: &mut World, slot: usize, h: u32) {
+    let (x, y) = {
+        let m = w.mo(h);
+        (m.x, m.y)
+    };
+    if w.g.phase == crate::game::PH_LOBBY && !w.map.lobby_spots.is_empty() {
+        // mill around the lobby island
+        let map = w.map.clone();
+        let s = map.lobby_spots[w.players[slot].bot.rng.below(map.lobby_spots.len() as u32) as usize];
+        return set_goal_pos(w, slot, (s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS, 35 * 6);
+    }
+    if let Some((cx, cy, r)) = br_urgent(w, x, y) {
+        let (gx, gy) = spot_toward(w, slot, x, y, cx, cy, r * 3 / 4);
+        return set_goal_pos(w, slot, gx, gy, 35 * 6);
+    }
+    let best = best_item(w, slot, h, 2500);
+    let roll = w.players[slot].bot.rng.chance(2, 3);
+    match best {
+        Some((sc, o)) if sc > 800 || roll => set_goal_item(w, slot, o, 35 * 10),
+        _ => {
+            let z = w.g.zone;
+            let (gx, gy) = spot_in_circle(w, slot, z.x, z.y, z.r);
+            set_goal_pos(w, slot, gx, gy, 35 * 10);
+        }
     }
 }
 

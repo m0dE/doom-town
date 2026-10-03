@@ -229,7 +229,7 @@ pub unsafe extern "C" fn world_deserialize_map(_map_id: i32, ptr: *const u8, len
 #[no_mangle]
 pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
     let n = (len / 4) as usize;
-    if n < 11 || (ptr as usize) % 4 != 0 {
+    if n < 11 || !(ptr as usize).is_multiple_of(4) {
         return 0;
     }
     let w: Vec<u32> = std::slice::from_raw_parts(ptr, n).to_vec();
@@ -237,12 +237,24 @@ pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
         return 0;
     }
     let count = w[10] as usize;
-    if count == 0 || n < 11 + count {
+    if count == 0 || count > n - 11 {
         return 0;
     }
     let seed = if n > 11 + count { w[11 + count] } else { 0 };
     let flags = if n > 12 + count { w[12 + count] } else { 0 };
-    let cfg = crate::game::Config {
+    // the rules block after the flags word: [count, (key, value) x count]
+    let mut rules: Vec<(u32, i32)> = Vec::new();
+    if n > 13 + count {
+        let rc = w[13 + count] as usize;
+        // compare against what is left (no rc * 2 overflow on wasm32)
+        if rc > (n - 14 - count) / 2 {
+            return 0;
+        }
+        for i in 0..rc {
+            rules.push((w[14 + count + 2 * i], w[15 + count + 2 * i] as i32));
+        }
+    }
+    let mut cfg = crate::game::Config {
         mode: w[1],
         slots: w[2],
         match_tics: w[3],
@@ -253,7 +265,9 @@ pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
         tickets: w[8],
         friendly_fire: w[9] != 0,
         flags,
+        br: Default::default(),
     };
+    cfg.apply_rules(&rules);
     with(|s| {
         let mut maps = Vec::new();
         for &id in &w[11..11 + count] {
@@ -304,6 +318,10 @@ pub extern "C" fn world_view_match(h: u32) -> *const u8 {
             }
         }
         for q in w.boss_view() {
+            put_i32(v, q);
+        }
+        // battle royale (BR_WORDS, zeros in the other modes)
+        for q in w.br_view() {
             put_i32(v, q);
         }
         v.as_ptr()
@@ -399,7 +417,8 @@ pub extern "C" fn world_view_mobjs(h: u32) -> *const u8 {
                 Some(m) => m,
                 None => continue,
             };
-            let pslot = if m.player >= 0 && w.players.get(m.player as usize).map(|p| p.mo.h == o).unwrap_or(false) { m.player + 1 } else { 0 };
+            let own = |p: &Player| p.mo.h == o || (m.type_ as usize == mt::PARACHUTER && p.air_mo.h == o);
+            let pslot = if m.player >= 0 && w.players.get(m.player as usize).map(own).unwrap_or(false) { m.player + 1 } else { 0 };
             for x in [m.id as i32, m.x, m.y, m.z, m.angle as i32, (m.sprite & 0xffff) | (m.frame << 16), m.flags as i32, (m.type_ as i32) | (pslot << 16), m.radius, m.height, m.momx, m.momy] {
                 put_i32(v, x);
             }
@@ -431,7 +450,7 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
         let p = match w.players.get(slot as usize) {
             Some(p) => p,
             None => {
-                for _ in 0..51 {
+                for _ in 0..crate::drop::PLAYER_WORDS {
                     put_i32(v, 0);
                 }
                 return v.as_ptr();
@@ -443,8 +462,11 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
                 let m = w.mo(hh);
                 (m.id as i32, m.x, m.y, m.z, m.angle as i32, (m.z <= m.floorz) as i32)
             }
-            None => (0, 0, 0, 0, 0, 0),
+            None => (0, 0, 0, 0, if p.air != 0 { p.aangle as i32 } else { 0 }, 0),
         };
+        let vehicle = w.deref(p.vehicle);
+        let air = if vehicle.is_some() { crate::drop::AIR_VEHICLE } else { p.air as i32 };
+        let (ax, ay, az) = if (1..=3).contains(&p.air) { (p.ax, p.ay, p.az) } else { (0, 0, 0) };
         let mut owned = 0i32;
         for (i, &o) in p.weaponowned.iter().enumerate() {
             if o {
@@ -458,7 +480,7 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
             },
             None => 0,
         };
-        let words: [i32; 51] = [
+        let words: [i32; crate::drop::PLAYER_WORDS] = [
             p.slot,
             id,
             p.playerstate as i32,
@@ -510,6 +532,12 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
             w.team_of(slot as usize),
             w.respawn_mask(slot as usize),
             w.spectating(slot as usize),
+            air,
+            ax,
+            ay,
+            az,
+            vehicle.map(|b| w.mo(b).id as i32).unwrap_or(0),
+            p.grenades,
         ];
         for x in words {
             put_i32(v, x);

@@ -52,6 +52,7 @@ export class MapView implements WorldView {
       this.warm = null;
       r.setSimNameTables(tables.textures, tables.flats);
       r.setHudHeightPx(this.hudPx);
+      r.setZoomFov(this.zoomFov);
       this.renderer = r;
       this.applyPlayers();
       console.info(`[render] ${map} ready in ${Math.round(performance.now() - t0)} ms`);
@@ -77,6 +78,9 @@ export class MapView implements WorldView {
   resize(w: number, h: number): void { this.automap?.resize(w, h); }
   hudHeight(px: number): void { this.hudPx = px; this.renderer?.setHudHeightPx(px); }
   setFov(deg: number): void { this.fov = deg; this.renderer?.setOptions({ fov: deg }); }
+  /** The scope's field of view while zoomed (null: the player's own); survives a map change. */
+  setZoomFov(deg: number | null): void { this.zoomFov = deg; this.renderer?.setZoomFov(deg); }
+  private zoomFov: number | null = null;
 
   setPlayers(mode: '3d' | 'sprites'): void {
     this.players = mode;

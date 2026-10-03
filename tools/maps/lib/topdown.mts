@@ -85,6 +85,10 @@ export function renderTopDown(map: MapData, title: string, maxPx = 1600): Canvas
     } else if (t.type === 9000) cv.disc(x, y, r * 1.2, [255, 60, 50]);
     else if (t.type === 9001) cv.disc(x, y, r * 1.2, [60, 120, 255]);
     else if (t.type === 11) { cv.disc(x, y, r * 2.2, [255, 240, 0]); cv.disc(x, y, r * 1.5, side.get(t) === 1 ? [60, 120, 255] : [255, 60, 50]); }
+    else if (t.type === 9030) cv.disc(x, y, Math.max(1.5, r), [255, 255, 255]); // battle royale lobby spot
+    else if (t.type === 9040) { cv.disc(x, y, Math.max(3, r * 2.5), [20, 20, 20]); cv.disc(x, y, Math.max(2, r * 1.8), [0, 230, 255]); } // buggy
+    else if (t.type === 9050 || t.type === 9051) cv.disc(x, y, Math.max(2, r * 1.5), [255, 60, 200]); // sniper rifle / grenade pack
+    else if (t.type === 9020) cv.disc(x, y, Math.max(2, r * 1.4), [190, 120, 40]); // battle royale crate
     else if (t.type >= 1 && t.type <= 4) cv.disc(x, y, r * 1.6, [255, 255, 255]);
     else if (WEAPONS.has(t.type)) cv.disc(x, y, r * 1.5, [255, 140, 0]);
     else if (AMMO.has(t.type)) cv.disc(x, y, r, [200, 200, 80]);
@@ -96,6 +100,6 @@ export function renderTopDown(map: MapData, title: string, maxPx = 1600): Canvas
   let pi = 0;
   for (const t of map.things) if (t.type === 9010) cv.text(X(t.x) - 3, Y(t.y) - 5, 'ABCDEFGH'[pi++] ?? '?', [20, 20, 20], 3, false);
   const nStart = map.things.filter((t) => t.type === 11).length;
-  cv.text(8, 8, `${title}  ${Math.round(maxx - minx - 2 * pad)}x${Math.round(maxy - miny - 2 * pad)}  ${map.lines.length} LINES ${map.sectors.length} SECTORS  ${nStart} DM STARTS`, [230, 230, 230], 2);
+  cv.text(8, 8, `${title}  ${Math.round(maxx - minx - 2 * pad)}x${Math.round(maxy - miny - 2 * pad)}  ${map.lines.length} LINES ${map.sectors.length} SECTORS  ${nStart} DM STARTS${map.things.some((t) => t.type === 9020) ? `  ${map.things.filter((t) => t.type === 9020).length} CRATES` : ''}`, [230, 230, 230], 2);
   return cv;
 }

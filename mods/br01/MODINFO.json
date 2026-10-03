@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "id": "br01",
+  "title": "Doom Town Royale",
+  "author": "Doom Town",
+  "license": "BSD-3-Clause",
+  "description": "64 marines, one island, one survivor.",
+  "mode": "battle-royale",
+  "map": "BR01",
+  "slots": 64,
+  "ghosts": false,
+  "bosses": false,
+  "rules": {
+    "matchSeconds": 900,
+    "lobbySeconds": 45,
+    "dropAltitude": 4096,
+    "startBullets": 20,
+    "vehicles": true,
+    "supplyDrops": true,
+    "zone": [
+      { "wait": 60, "shrink": 60, "radius": 60, "dps": 1 },
+      { "wait": 45, "shrink": 45, "radius": 35, "dps": 2 },
+      { "wait": 40, "shrink": 40, "radius": 18, "dps": 4 },
+      { "wait": 30, "shrink": 30, "radius": 8, "dps": 7 },
+      { "wait": 30, "shrink": 30, "radius": 0, "dps": 10 }
+    ],
+    "loot": {
+      "healthBonus": 15, "armorBonus": 15, "stimpack": 10, "medikit": 6, "greenArmor": 5, "blueArmor": 1,
+      "shotgun": 8, "superShotgun": 5, "chaingun": 7, "rocketLauncher": 4, "plasma": 3, "bfg": 0.5,
+      "bullets": 6, "shells": 5, "rockets": 3, "cells": 2, "backpack": 3, "berserk": 2, "soulsphere": 0.5,
+      "sniper": 5, "grenades": 8
+    }
+  }
+}

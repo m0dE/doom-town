@@ -16,7 +16,7 @@ const ANG5: Angle = ANG90 / 18;
 const MOVE_THRUST: Fixed = 1741;
 
 /// order used by next/previous weapon
-pub const WEAPON_CYCLE: [i32; 9] = [WP_FIST, WP_CHAINSAW, WP_PISTOL, WP_SHOTGUN, WP_SUPERSHOTGUN, WP_CHAINGUN, WP_MISSILE, WP_PLASMA, WP_BFG];
+pub const WEAPON_CYCLE: [i32; 10] = [WP_FIST, WP_CHAINSAW, WP_PISTOL, WP_SNIPER, WP_SHOTGUN, WP_SUPERSHOTGUN, WP_CHAINGUN, WP_MISSILE, WP_PLASMA, WP_BFG];
 
 impl World {
     /// P_Thrust
@@ -90,11 +90,13 @@ impl World {
             m.z <= m.floorz
         };
         self.players[slot].onground = onground;
+        // battle royale: half speed while zoomed
+        let thrust = if self.zoomed(slot) { MOVE_THRUST / 2 } else { MOVE_THRUST };
         if cmd.forward != 0 && onground {
-            self.thrust(h, yaw, cmd.forward as i32 * MOVE_THRUST);
+            self.thrust(h, yaw, cmd.forward as i32 * thrust);
         }
         if cmd.side != 0 && onground {
-            self.thrust(h, yaw.wrapping_sub(ANG90), cmd.side as i32 * MOVE_THRUST);
+            self.thrust(h, yaw.wrapping_sub(ANG90), cmd.side as i32 * thrust);
         }
         // jump (not in vanilla): from the ground only, with a short cooldown after landing
         if onground {
@@ -167,8 +169,8 @@ impl World {
         p.dead_tics += 1;
         let pressed = p.cmd.buttons & (BT_USE | BT_ATTACK) != 0;
         match self.g.cfg.mode {
-            crate::game::MODE_ELIM => {
-                // dead until the next round; attack cycles whom we watch
+            crate::game::MODE_ELIM | crate::game::MODE_BR => {
+                // dead until the next round / match; attack cycles whom we watch
                 let p = &mut self.players[slot];
                 if p.cmd.buttons & BT_ATTACK != 0 && p.prev_buttons & BT_ATTACK == 0 {
                     p.spec_cycle = p.spec_cycle.wrapping_add(1) & 0xffff;
@@ -200,22 +202,16 @@ impl World {
         if a == AM_NOAMMO {
             return true;
         }
-        let need = if w == WP_BFG {
-            40
-        } else if w == WP_SUPERSHOTGUN {
-            2
-        } else {
-            1
-        };
-        p.ammo[a as usize] >= need
+        p.ammo[a as usize] >= ammo_per_shot(w)
     }
 
     fn cycle_weapon(&self, slot: usize, dir: i32) -> i32 {
         let p = &self.players[slot];
         let cur = if p.pendingweapon != WP_NOCHANGE { p.pendingweapon } else { p.readyweapon };
         let idx = WEAPON_CYCLE.iter().position(|&w| w == cur).unwrap_or(0) as i32;
-        for k in 1..=9 {
-            let i = (idx + dir * k).rem_euclid(9) as usize;
+        let n = WEAPON_CYCLE.len() as i32;
+        for k in 1..=n {
+            let i = (idx + dir * k).rem_euclid(n) as usize;
             let w = WEAPON_CYCLE[i];
             if self.weapon_has_ammo(slot, w) {
                 return w;
@@ -254,7 +250,14 @@ impl World {
         // turning and looking stay live during the post-teleport freeze (mouse play);
         // vanilla froze them too
         self.look_player(slot, h);
-        if self.mo(h).reactiontime != 0 {
+        if !self.players[slot].vehicle.is_null() {
+            // driving a buggy: no walking, no firing
+            self.players[slot].cmd.buttons &= !BT_ATTACK;
+            self.drive(slot, h);
+            if !self.alive(h) {
+                return;
+            }
+        } else if self.mo(h).reactiontime != 0 {
             self.mo_mut(h).reactiontime -= 1;
         } else {
             self.move_player(slot, h);
@@ -282,6 +285,10 @@ impl World {
             if w == WP_SHOTGUN && p.weaponowned[WP_SUPERSHOTGUN as usize] && p.readyweapon != WP_SUPERSHOTGUN {
                 w = WP_SUPERSHOTGUN;
             }
+            // key 2 toggles pistol / sniper rifle
+            if w == WP_PISTOL && p.weaponowned[WP_SNIPER as usize] && p.readyweapon != WP_SNIPER {
+                w = WP_SNIPER;
+            }
             newweapon = w;
         } else if cmd.buttons & BT_NEXTWEAPON != 0 && prev & BT_NEXTWEAPON == 0 {
             newweapon = self.cycle_weapon(slot, 1);
@@ -297,12 +304,21 @@ impl World {
         // use
         if cmd.buttons & BT_USE != 0 {
             if !self.players[slot].usedown {
-                self.use_lines(slot);
+                // out of a buggy; else a crate in reach, a buggy, then the lines
+                if !self.players[slot].vehicle.is_null() {
+                    self.leave_vehicle(slot, false);
+                } else if !self.use_crate(slot) && !self.use_vehicle(slot) {
+                    self.use_lines(slot);
+                }
                 self.players[slot].usedown = true;
             }
         } else {
             self.players[slot].usedown = false;
         }
+        if !self.alive(h) {
+            return;
+        }
+        self.grenade_tick(slot, h);
         if !self.alive(h) {
             return;
         }

@@ -37,6 +37,21 @@ export interface RenderMobj {
   slot: number;
   /** player color: index into PLAYER_COLORS (0 = untranslated green) */
   translation: number;
+  /**
+   * Set by the renderer on player bodies it hands to the body hook in a special pose
+   * (battle royale): 1 seated in a buggy, 2 skydiving (freefall), 3 under a parachute.
+   */
+  pose?: number;
+}
+
+/** Battle royale's zone for the storm (DESIGN.md "Battle royale v2"); map units. */
+export interface RenderRoyale {
+  /** current circle */
+  x: number; y: number; r: number;
+  /** the next circle (the same as the current when there is none) */
+  nx: number; ny: number; nr: number;
+  /** draw the storm and tint the screen outside it (false: lobby / intermission). Default true. */
+  storm?: boolean;
 }
 
 export interface RenderSector {
@@ -108,6 +123,8 @@ export interface RenderFrame {
   /** events from the tics consumed since the previous frame */
   events: ArrayLike<RenderEvent>;
   eventCount?: number;
+  /** battle royale: the zone (storm wall, next circle, screen tint); null/absent = none */
+  royale?: RenderRoyale | null;
 }
 
 /** Hook for drawing player bodies some other way than sprites (e.g. 3D models). */

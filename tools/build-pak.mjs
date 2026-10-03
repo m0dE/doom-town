@@ -17,18 +17,21 @@
 //
 //   node tools/build-pak.mjs
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { Wad, buildWadFile, MAP_LUMPS } from '../src/wad/wad.ts';
-import { parsePnames, parseTextureLump, writeTextureLumps } from '../src/wad/texturedefs.ts';
+import { buildWadFile, MAP_LUMPS } from '../src/wad/wad.ts';
+import { parsePnames, writeTextureLumps } from '../src/wad/texturedefs.ts';
 import { parseMap } from '../src/wad/mapdata.ts';
-import { ANIMDEFS, SWITCHES, skyTextureForMap, SKY_FLAT } from '../src/wad/animdefs.ts';
+import { skyTextureForMap } from '../src/wad/animdefs.ts';
 import { THING_DEFS } from '../src/wad/things.ts';
 import { compileWarMap } from './maps/build.mts';
+import { ROOT, loadArtSources } from './lib/art.mjs';
 
-/** Map rotations per mode (DESIGN.md "Modes, teams and map rotation"). */
+/**
+ * Map rotations per mode (DESIGN.md "Modes, teams and map rotation"). Battle royale's BR01
+ * is not here: it ships as a mod, public/mods/br01.wad (tools/mods/pack.mjs, `npm run mods`).
+ */
 export const ROTATIONS = {
   deathmatch: ['MAP19', 'MAP24', 'MAP20', 'MAP30', 'MAP27', 'MAP32'],
   teamDeathmatch: ['MAP19', 'MAP24', 'MAP20', 'MAP30', 'MAP27', 'MAP32'],
@@ -38,18 +41,10 @@ export const ROTATIONS = {
 /** The map whose art ships inside the base pak (the first deathmatch map). */
 export const BASE_ART_MAP = 'MAP19';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = join(ROOT, 'assets', 'freedm.wad');
-const FREEDOOM2 = '/app/data/home/doom-ref/freedoom-0.13.0/freedoom2.wad';
 const OUT = join(ROOT, 'public', 'freedm-lite.wad');
 const MAPS_DIR = join(ROOT, 'public', 'maps');
 
-if (!existsSync(SRC)) {
-  console.error('assets/freedm.wad missing: run `npm run fetch` first');
-  process.exit(1);
-}
-const wad = new Wad(new Uint8Array(readFileSync(SRC)));
-const extra = existsSync(FREEDOOM2) ? new Wad(new Uint8Array(readFileSync(FREEDOOM2))) : null;
+const { wad, allTex, artOf, artLumps: artLumpsOf, orderFlats } = loadArtSources();
 
 // ---- maps -----------------------------------------------------------------
 const SHIPPED = [...new Set(Object.values(ROTATIONS).flat())];
@@ -74,54 +69,7 @@ for (const line of new TextDecoder('latin1').decode(wad.get('DEHACKED') ?? new U
 }
 const WAR_TITLES = { WAR01: 'WAR01: Nukage Front', WAR02: 'WAR02: Canal City' };
 
-// ---- texture definitions (FreeDM first, then Freedoom2 for anything FreeDM lacks) ----
-const texOf = (w) => {
-  const pn = parsePnames(w.get('PNAMES'));
-  return [...parseTextureLump(w.get('TEXTURE1'), pn), ...(w.get('TEXTURE2') ? parseTextureLump(w.get('TEXTURE2'), pn) : [])];
-};
-const allTex = texOf(wad);
-const known = new Set(allTex.map((t) => t.name));
-if (extra) for (const t of texOf(extra)) if (!known.has(t.name)) { allTex.push(t); known.add(t.name); }
-const texIndex = new Map(allTex.map((t, i) => [t.name, i]));
-const texByName = new Map(allTex.map((t) => [t.name, t]));
-
-const flatNs = [...wad.namespace('F').keys()];
-const extraFlatNs = extra ? [...extra.namespace('F').keys()].filter((n) => !wad.namespace('F').has(n)) : [];
-const allFlats = [...flatNs, ...extraFlatNs]; // namespace order, FreeDM first
-const flatPos = new Map(allFlats.map((n, i) => [n, i]));
-const flatLump = (n) => wad.namespace('F').get(n)?.data ?? extra?.namespace('F').get(n)?.data;
-const patchLump = (n) => wad.nsLump('P', n)?.data ?? extra?.nsLump('P', n)?.data;
-
-/** Wall textures and flats one map needs (with switch partners, animation ranges, sky). */
-function artOf(name, map) {
-  const wantTex = new Set();
-  const addTex = (n) => { if (n && n !== '-' && texIndex.has(n)) wantTex.add(n); };
-  for (const s of map.sides) { addTex(s.top); addTex(s.mid); addTex(s.bottom); }
-  addTex(skyTextureForMap(name));
-  for (const [a, b] of SWITCHES) if (wantTex.has(a) || wantTex.has(b)) { addTex(a); addTex(b); }
-  for (const a of ANIMDEFS.filter((d) => d.isTexture)) {
-    const i0 = texIndex.get(a.first), i1 = texIndex.get(a.last);
-    if (i0 === undefined || i1 === undefined) continue;
-    let used = false;
-    for (let i = i0; i <= i1; i++) if (wantTex.has(allTex[i].name)) used = true;
-    if (used) for (let i = i0; i <= i1; i++) wantTex.add(allTex[i].name);
-  }
-  const wantFlat = new Set([SKY_FLAT]);
-  for (const s of map.sectors) { if (flatPos.has(s.floorPic)) wantFlat.add(s.floorPic); if (flatPos.has(s.ceilPic)) wantFlat.add(s.ceilPic); }
-  for (const a of ANIMDEFS.filter((d) => !d.isTexture)) {
-    const i0 = flatPos.get(a.first), i1 = flatPos.get(a.last);
-    if (i0 === undefined || i1 === undefined) continue;
-    let used = false;
-    for (let i = i0; i <= i1; i++) if (wantFlat.has(allFlats[i])) used = true;
-    if (used) for (let i = i0; i <= i1; i++) wantFlat.add(allFlats[i]);
-  }
-  const patches = new Set();
-  for (const t of wantTex) for (const p of texByName.get(t).patches) patches.add(p.patch.toUpperCase());
-  const missing = new Set();
-  for (const s of map.sides) for (const n of [s.top, s.mid, s.bottom]) if (n !== '-' && !texIndex.has(n)) missing.add(n);
-  for (const s of map.sectors) for (const n of [s.floorPic, s.ceilPic]) if (!flatPos.has(n)) missing.add(n);
-  return { tex: wantTex, flats: wantFlat, patches, missing };
-}
+// ---- art per map (tools/lib/art.mjs) ----------------------------------------
 const art = new Map([...maps].map(([n, m]) => [n, artOf(n, m.map)]));
 
 // union of all textures, in the original order (animation ranges stay contiguous)
@@ -173,25 +121,10 @@ const ui = wad.lumps.filter((l) => UI.test(l.name) && l.source === 0).map((l) =>
 const lump = (n) => { const d = wad.get(n); if (!d) throw new Error(`missing lump ${n}`); return d; };
 const baseArt = art.get(BASE_ART_MAP);
 const missingPatch = new Set();
-function artLumps(patchNames, flatNames) {
-  const L = [];
-  const put = (name, data) => L.push({ name, data: data ?? new Uint8Array(0) });
-  if (patchNames.length) {
-    put('P_START', null);
-    for (const n of patchNames) { const d = patchLump(n); if (d) put(n, d); else missingPatch.add(n); }
-    put('P_END', null);
-  }
-  if (flatNames.length) {
-    put('F_START', null);
-    for (const n of flatNames) put(n, flatLump(n));
-    put('F_END', null);
-  }
-  return L;
-}
+const artLumps = (patchNames, flatNames) => artLumpsOf(patchNames, flatNames, missingPatch);
 // patches in PNAMES order, flats in namespace order (animation ranges contiguous per pak)
 const patchOrder = parsePnames(pnamesOut);
 const orderPatches = (set) => patchOrder.filter((p) => set.has(p.toUpperCase()));
-const orderFlats = (set) => allFlats.filter((f) => set.has(f));
 
 const L = [];
 const put = (name, data) => L.push({ name, data: data ?? new Uint8Array(0) });

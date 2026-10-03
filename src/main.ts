@@ -2,7 +2,8 @@
  * Boot: the start screen, then a match.
  *
  * URL parameters: ?room=<name> joins that room, ?offline=1 plays alone with
- * bots on a local loopback, ?name=<name>, ?autostart=1 skips the menu (tests),
+ * bots on a local loopback, ?offline=1&mod=<url> playtests a mod file (DESIGN.md
+ * "Mods"), ?name=<name>, ?autostart=1 skips the menu (tests),
  * and the three the arrr harness aims a run with - ?central=<url>,
  * ?nodeUrl=<ws url> (or ?via=).
  *
@@ -10,7 +11,10 @@
  * code are all fetched, so Play is instant.
  */
 import './menu/menu.css';
-import { prefetch, loadWad, onAssetProgress } from './game/assets.js';
+import { prefetch, loadWad, onAssetProgress, setLocalMod } from './game/assets.js';
+import { installedMods, registerMod } from './mods/index.js';
+import { readModInfo, MOD_MODES } from './mods/modinfo.js';
+import { Wad } from './wad/index.js';
 import { Gfx } from './hud/gfx.js';
 import { Doomguy } from './menu/doomguy.js';
 import { drawTitle } from './menu/title.js';
@@ -20,7 +24,7 @@ import { ServerBrowser, esc } from './menu/serverbrowser.js';
 import { Account, type AccountState } from './menu/account.js';
 import { cleanRoomName } from './menu/rooms.js';
 import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
-import { MODES, MODE_ORDER, gameFor, roomNameFor, type ModeKey } from './menu/modes.js';
+import { MODES, MODE_ORDER, gameFor, roomNameFor, type CfgOverrides, type ModeKey } from './menu/modes.js';
 import type { Game } from './game/game.js';
 
 declare const __BUILD_REV__: string;
@@ -158,13 +162,20 @@ const createBosses = $<HTMLInputElement>('create-bosses');
 const createPreview = $('create-preview');
 createModes.innerHTML = MODE_ORDER.map((k, i) =>
   `<label><input type="radio" name="create-mode" value="${k}"${i === 0 ? ' checked' : ''}><b>${esc(MODES[k].label)}</b><small>${esc(MODES[k].blurb)}</small></label>`).join('');
+// the installed mods (public/mods/index.json), in the same radio group: a room plays a mode or a mod
+const createMods = $('create-mods');
+const mods = installedMods();
+createMods.innerHTML = mods.map((m) =>
+  `<label><input type="radio" name="create-mode" value="mod:${esc(m.id)}"><b>${esc(m.title)} <em class="badge mod">MOD</em></b><small>${esc(MODES[MOD_MODES[m.mode]].label)} · by ${esc(m.author)}${m.description ? ` · ${esc(m.description)}` : ''}</small></label>`).join('');
+$('create-mods-set').hidden = !mods.length;
+const pickedMode = (): string => (create.querySelector<HTMLInputElement>('input[name="create-mode"]:checked')?.value ?? 'dm');
 function createdRoom(): { name: string; label: string } {
-  const mode = (createModes.querySelector<HTMLInputElement>('input:checked')?.value ?? 'dm') as ModeKey;
-  const g = gameFor(mode, createBosses.checked);
+  const pick = pickedMode();
+  const g = pick.startsWith('mod:') ? gameFor('dm', false, undefined, pick.slice(4)) : gameFor(pick as ModeKey, createBosses.checked);
   return { name: roomNameFor(cleanRoomName(roomIn.value), g), label: g.label };
 }
 function paintCreate(): void {
-  const mode = createModes.querySelector<HTMLInputElement>('input:checked')?.value;
+  const mode = pickedMode();
   createBosses.disabled = mode !== 'dm' && mode !== 'tdm';
   const r = createdRoom();
   createPreview.innerHTML = `Room <b>${esc(r.name)}</b> · ${esc(r.label)}`;
@@ -182,6 +193,35 @@ $<HTMLFormElement>('create-form').addEventListener('submit', (e) => {
 const controls = $<HTMLDialogElement>('controls');
 $('controls-btn').addEventListener('click', () => controls.showModal());
 
+// ------------------------------------------------------------------ mods
+
+/**
+ * Playtest a mod file (DESIGN.md "Mods"): read its MODINFO, make its id known to the
+ * room layer, hand its bytes to the asset loader, and play it offline against bots -
+ * nobody else could join a room built from a file only this page has.
+ */
+async function playModFile(bytes: Uint8Array, source: string): Promise<void> {
+  try {
+    const info = readModInfo(new Wad(bytes));
+    if (!info) throw new Error('it has no MODINFO lump');
+    new Wad(bytes).mapLumps(info.map);
+    registerMod(info, bytes.length);
+    setLocalMod(info.id, bytes);
+    modSource = source;
+    await play(`practice-mod-${info.id}`, true);
+  } catch (err) {
+    errorBox.textContent = `That mod file will not load: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+let modSource: string | null = null;
+const testModFile = $<HTMLInputElement>('test-mod-file');
+$('test-mod-btn').addEventListener('click', () => testModFile.click());
+testModFile.addEventListener('change', () => {
+  const f = testModFile.files?.[0];
+  testModFile.value = '';
+  if (f) void f.arrayBuffer().then((b) => playModFile(new Uint8Array(b), ''));
+});
+
 // ------------------------------------------------------------------ the match
 
 let current: Game | null = null;
@@ -196,6 +236,13 @@ function showMenu(): void {
   document.title = 'Doom Town';
   guy.start();
   browser.start();
+}
+
+/** Offline only (tests, playtesting): ?lobby= ?match= ?inter= in seconds shorten the match's phases. */
+function testOverrides(): CfgOverrides | undefined {
+  const sec = (k: string): number | undefined => { const v = Number(params.get(k)); return params.has(k) && Number.isFinite(v) && v > 0 ? Math.round(v * 35) : undefined; };
+  const o: CfgOverrides = { lobbyTics: sec('lobby'), matchTics: sec('match'), interTics: sec('inter') };
+  return Object.values(o).some((v) => v !== undefined) ? o : undefined;
 }
 
 async function play(room: string, offline: boolean): Promise<void> {
@@ -220,6 +267,7 @@ async function play(room: string, offline: boolean): Promise<void> {
       nodeUrl: params.get('nodeUrl') ?? params.get('via') ?? regionNodeUrl(room),
       host: $('view'),
       hud: $('hud'),
+      overrides: offline ? testOverrides() : undefined,
     }, (label, frac) => { loadingLabel.textContent = label; loadingBar.style.width = `${Math.round(70 + frac * 30)}%`; });
     off();
     current = game;
@@ -227,7 +275,8 @@ async function play(room: string, offline: boolean): Promise<void> {
     document.title = offline ? 'Practice — Doom Town' : `${room} — Doom Town`;
     const keep = new URLSearchParams({ room });
     if (offline) keep.set('offline', '1');
-    for (const k of ['central', 'nodeUrl', 'via'] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }
+    if (offline && modSource) keep.set('mod', modSource);
+    for (const k of ['central', 'nodeUrl', 'via', ...(offline ? ['lobby', 'match', 'inter'] as const : [])] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }
     history.replaceState(null, '', `${location.pathname}?${keep}`);
     loading.classList.add('hidden');
     game.onLeave = () => {
@@ -247,7 +296,14 @@ async function play(room: string, offline: boolean): Promise<void> {
 // ------------------------------------------------------------------ entry
 
 // A ?room= link (or ?offline=1) is an invitation: straight into that match.
-if (params.has('autostart') || params.has('room') || params.has('offline')) {
+if (params.has('offline') && params.get('mod')) {
+  // ?offline=1&mod=<url or path>: a mod file under test
+  const url = params.get('mod')!;
+  void fetch(url).then(async (r) => {
+    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+    await playModFile(new Uint8Array(await r.arrayBuffer()), url);
+  }).catch((err) => { errorBox.textContent = `Could not load the mod: ${err instanceof Error ? err.message : String(err)}`; browser.start(); });
+} else if (params.has('autostart') || params.has('room') || params.has('offline')) {
   const offline = params.has('offline');
   const room = cleanRoomName(params.get('room') ?? '') || (offline ? 'practice' : regionRoomName(homeRegion(), 1));
   void play(room, offline);

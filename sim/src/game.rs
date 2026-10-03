@@ -16,11 +16,16 @@ pub const MODE_FFA: u32 = 0;
 pub const MODE_TDM: u32 = 1;
 pub const MODE_ELIM: u32 = 2;
 pub const MODE_WAR: u32 = 3;
+pub const MODE_BR: u32 = 4;
 
 pub const PH_PLAY: u8 = 0;
 pub const PH_FREEZE: u8 = 1;
 pub const PH_ROUND_OVER: u8 = 2;
 pub const PH_INTER: u8 = 3;
+/// battle royale: everyone on the lobby island
+pub const PH_LOBBY: u8 = 4;
+/// battle royale: the dropship crossing
+pub const PH_DROP: u8 = 5;
 
 pub const ROUND_OVER_TICS: u32 = 35 * 3;
 pub const WAVE_TICS: u32 = 35 * 10;
@@ -48,18 +53,20 @@ pub struct Config {
     pub friendly_fire: bool,
     /// bit 0: random bosses (FFA and TDM only), bit 1: players pass through each other
     pub flags: u32,
+    /// battle royale rules (defaults unless a mod's rules block says otherwise)
+    pub br: crate::royale::BrRules,
 }
 
 impl Config {
     pub fn ffa(slots: u32) -> Config {
-        Config { mode: MODE_FFA, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0 }.with_defaults()
+        Config { mode: MODE_FFA, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0, br: Default::default() }.with_defaults()
     }
     pub fn mode(mode: u32, slots: u32) -> Config {
-        Config { mode, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0 }.with_defaults()
+        Config { mode, slots, match_tics: 0, inter_tics: 0, round_tics: 0, freeze_tics: 0, rounds_to_win: 0, tickets: 0, friendly_fire: false, flags: 0, br: Default::default() }.with_defaults()
     }
     /// fill zero timing fields with the mode's defaults
     pub fn with_defaults(mut self) -> Config {
-        if self.mode > MODE_WAR {
+        if self.mode > MODE_BR {
             self.mode = MODE_FFA;
         }
         let d = |v: &mut u32, x: u32| {
@@ -67,10 +74,14 @@ impl Config {
                 *v = x
             }
         };
-        d(&mut self.match_tics, if self.mode == MODE_WAR { 35 * 1200 } else { MATCH_TICS });
+        d(&mut self.match_tics, match self.mode {
+            MODE_WAR => 35 * 1200,
+            MODE_BR => 35 * 900,
+            _ => MATCH_TICS,
+        });
         d(&mut self.inter_tics, INTER_TICS);
         d(&mut self.round_tics, 35 * 150);
-        d(&mut self.freeze_tics, 35 * 5);
+        d(&mut self.freeze_tics, if self.mode == MODE_BR { 35 * 10 } else { 35 * 5 });
         d(&mut self.rounds_to_win, 7);
         d(&mut self.tickets, 3000);
         d(&mut self.slots, match self.mode {
@@ -79,10 +90,11 @@ impl Config {
             _ => 64,
         });
         self.slots = self.slots.clamp(1, 255);
+        self.br.sanitize();
         self
     }
     pub fn teams(&self) -> bool {
-        self.mode != MODE_FFA
+        matches!(self.mode, MODE_TDM | MODE_ELIM | MODE_WAR)
     }
     pub fn bosses(&self) -> bool {
         self.flags & 1 != 0 && (self.mode == MODE_FFA || self.mode == MODE_TDM)
@@ -125,11 +137,15 @@ pub struct Game {
     pub boss_drop: MRef,
     /// failed boss placements in a row (after 5 the 1024-unit rule relaxes)
     pub boss_tries: i32,
+    /// battle royale zone (all zeros in the other modes)
+    pub zone: crate::royale::Zone,
+    pub ship: crate::drop::Ship,
+    pub supply: crate::royale::Supply,
 }
 
 impl Game {
     pub fn new(cfg: Config, maps: Vec<Rc<Map>>) -> Game {
-        Game { cfg, maps, map_index: 0, match_index: 0, phase: PH_PLAY, phase_left: 0, match_tic: 0, team_score: [0; 2], round: 0, winner: -1, points: Vec::new(), low_sent: [false; 2], pending: 0, boss: MRef::NULL, boss_max: 0, boss_timer: -1, boss_drop: MRef::NULL, boss_tries: 0 }
+        Game { cfg, maps, map_index: 0, match_index: 0, phase: PH_PLAY, phase_left: 0, match_tic: 0, team_score: [0; 2], round: 0, winner: -1, points: Vec::new(), low_sent: [false; 2], pending: 0, boss: MRef::NULL, boss_max: 0, boss_timer: -1, boss_drop: MRef::NULL, boss_tries: 0, zone: Default::default(), ship: Default::default(), supply: Default::default() }
     }
 }
 
@@ -159,12 +175,16 @@ impl World {
     pub fn begin_match(&mut self) {
         let n = self.g.maps.len().max(1) as u32;
         let want = self.g.match_index % n;
-        if want != self.g.map_index {
+        if want != self.g.map_index || (self.mode() == MODE_BR && self.g.match_index > 0) {
+            // battle royale rebuilds the map every match: crates and one-shot items return
+            let changed = want != self.g.map_index;
             self.g.map_index = want;
             let m = self.g.maps[want as usize].clone();
             self.load_map(m);
-            let id = self.map.id;
-            self.emit(9, id, want as i32, self.g.match_index as i32, 0, 0, 0, 0);
+            if changed {
+                let id = self.map.id;
+                self.emit(9, id, want as i32, self.g.match_index as i32, 0, 0, 0, 0);
+            }
         } else {
             for p in self.players.iter_mut() {
                 p.fresh = true;
@@ -187,8 +207,14 @@ impl World {
         self.g.match_tic = 0;
         self.g.points = vec![CapPoint { owner: -1, progress: 0, flags: 0 }; if self.mode() == MODE_WAR { self.map.cap_points.len() } else { 0 }];
         self.g.pending |= PEND_MATCH;
+        self.zone_reset();
         if self.mode() == MODE_ELIM {
             self.begin_round();
+        } else if self.mode() == MODE_BR {
+            // the lobby island, then the dropship; one life from the drop on
+            self.g.ship = Default::default();
+            self.g.phase = PH_LOBBY;
+            self.g.phase_left = self.g.cfg.br.lobby_tics.max(1);
         } else {
             self.g.phase = PH_PLAY;
             self.g.phase_left = self.g.cfg.match_tics;
@@ -265,7 +291,11 @@ impl World {
 
     /// may this player be put into the world now?
     pub fn may_spawn(&self) -> bool {
-        !(self.mode() == MODE_ELIM && self.g.phase != PH_FREEZE)
+        match self.mode() {
+            MODE_ELIM => self.g.phase == PH_FREEZE,
+            MODE_BR => self.g.phase == PH_LOBBY,
+            _ => true,
+        }
     }
 
     /// mode rules after the thinkers ran
@@ -301,6 +331,46 @@ impl World {
             }
             MODE_ELIM => self.elim_tick(),
             MODE_WAR => self.war_tick(),
+            MODE_BR => self.br_tick(),
+            _ => {}
+        }
+    }
+
+    fn br_tick(&mut self) {
+        self.g.match_tic += 1;
+        self.g.phase_left = self.g.phase_left.saturating_sub(1);
+        match self.g.phase {
+            PH_LOBBY => {
+                if self.g.phase_left == 0 {
+                    self.begin_drop();
+                }
+            }
+            PH_DROP => {
+                if self.ship_tick() {
+                    self.g.phase = PH_PLAY;
+                    self.g.phase_left = self.g.cfg.match_tics.max(1);
+                    self.zone_start();
+                }
+            }
+            PH_PLAY => {
+                self.zone_tick();
+                let alive = self.br_alive();
+                if alive.len() <= 1 {
+                    let w = alive.first().map(|&s| s as i32).unwrap_or(-1);
+                    self.end_match(w);
+                } else if self.g.phase_left == 0 {
+                    // time limit: the live player with the most frags (lowest slot on ties)
+                    let mut best = -1i32;
+                    let mut bestf = i32::MIN;
+                    for &s in &alive {
+                        if self.players[s].frags > bestf {
+                            bestf = self.players[s].frags;
+                            best = s as i32;
+                        }
+                    }
+                    self.end_match(best);
+                }
+            }
             _ => {}
         }
     }
@@ -498,8 +568,13 @@ impl World {
         }
     }
 
-    /// elimination round loadout: pistol + shotgun + 50 shells (health is full already)
+    /// elimination round loadout: pistol + shotgun + 50 shells (health is full already);
+    /// battle royale: fist, pistol, 20 bullets
     pub fn apply_loadout(&mut self, slot: usize) {
+        if self.mode() == MODE_BR {
+            // the lobby: 200 bullets for fun; the starting kit is set at boarding
+            self.players[slot].ammo[AM_CLIP as usize] = if self.g.phase == PH_LOBBY { 200 } else { self.g.cfg.br.start_bullets };
+        }
         if self.mode() == MODE_ELIM {
             let p = &mut self.players[slot];
             p.weaponowned[WP_SHOTGUN as usize] = true;
@@ -509,9 +584,9 @@ impl World {
         }
     }
 
-    /// slot a dead elimination player watches (-1 none)
+    /// slot a dead elimination / battle royale player watches (-1 none)
     pub fn spectating(&self, slot: usize) -> i32 {
-        if self.mode() != MODE_ELIM {
+        if self.mode() != MODE_ELIM && self.mode() != MODE_BR {
             return -1;
         }
         let p = &self.players[slot];

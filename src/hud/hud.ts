@@ -14,6 +14,8 @@ import { StatusBar, WEAPON_AMMO } from './statusbar.js';
 import { PV } from '../sim/abi.js';
 import { PLAYER_COLORS } from '../game/colors.js';
 import { ordinal } from './strings.js';
+import { Minimap, pointState, type MinimapState } from './minimap.js';
+import type { MapData } from '../wad/index.js';
 
 export interface ScoreRow { slot: number; name: string; color: number; frags: number; deaths: number; ping: number; me: boolean }
 
@@ -31,6 +33,8 @@ export interface HudState {
   respawnReady: boolean;
   /** Who fragged us, while dead. */
   killer: string | null;
+  /** The scope, 0 (off) .. 1 (fully zoomed): its overlay fades in with it. */
+  zoom?: number;
   locked: boolean;
   style: 'bar' | 'full';
   /** A network line ("Reconnecting") or null. */
@@ -41,7 +45,7 @@ export interface HudState {
 
 /** What the HUD shows of the match (world_view_match, read by the game). */
 export interface ModeHud {
-  /** sim mode id: 0 deathmatch, 1 team deathmatch, 2 elimination, 3 war */
+  /** sim mode id: 0 deathmatch, 1 team deathmatch, 2 elimination, 3 war, 4 battle royale */
   mode: number;
   label: string;
   teams: boolean;
@@ -55,8 +59,14 @@ export interface ModeHud {
   alive: [number, number];
   /** our team, -1 none */
   myTeam: number;
-  /** war capture points: owner -1/0/1, progress -100 (red) .. 100 (blue) */
-  points: { owner: number; progress: number }[];
+  /** war capture points: owner -1/0/1, progress -100 (red) .. 100 (blue), flags (1 red inside, 2 blue inside) */
+  points: { owner: number; progress: number; flags: number }[];
+  /** war: the capture point we stand in, and what we are doing there */
+  inPoint?: { index: number; state: 'CAPTURING' | 'DEFENDING' | 'CONTESTED' | 'SECURED'; progress: number } | null;
+  /** battle royale */
+  br?: BrHud | null;
+  /** war and battle royale: what the minimap shows (null: no minimap) */
+  minimap?: MinimapState | null;
   boss: { name: string; health: number; max: number } | null;
   /** intermission headline, e.g. "RED TEAM WINS" */
   winner: string | null;
@@ -66,6 +76,26 @@ export interface ModeHud {
   spectating: string | null;
   /** war, while dead: what each weapon key spawns at ("1 BASE", "2 POINT A", ...) */
   spawnChoices: string[] | null;
+}
+
+/** What the HUD shows of a battle royale match. */
+export interface BrHud {
+  alive: number;
+  kills: number;
+  /** "ZONE SHRINKS IN 0:42" / "ZONE CLOSING" / "FINAL ZONE" */
+  zoneLine: string;
+  /** we are alive outside the safe zone */
+  outside: boolean;
+  /** damage per second outside */
+  dps: number;
+  /** dead: the place we finished (n-th), null when we were never in this match */
+  placed: number | null;
+  /** v2: grenades carried (null: the sim has none) */
+  grenades: number | null;
+  /** v2, phase 4: the lobby panel (players, humans first; seconds until the dropship leaves) */
+  lobby: { secondsLeft: number; players: { name: string; color: number; human: boolean; me: boolean }[] } | null;
+  /** v2: "PRESS JUMP TO DROP" and the like, under the crosshair */
+  prompt: string | null;
 }
 
 export const TEAM_CSS = ['#ff4a3a', '#5a7bff'];
@@ -88,12 +118,16 @@ export class Hud {
   private lastFull = '';
   private chatInput: HTMLInputElement | null = null;
   private rows: ScoreRow[] = [];
+  private readonly minimap: Minimap;
+  private lastCapture = '';
+  private lastZone = '';
+  private lastLobby = '';
 
   constructor(private readonly host: HTMLElement, private readonly gfx: Gfx) {
     this.font = new DoomFont(gfx);
     this.bar = new StatusBar(gfx);
     host.innerHTML = '';
-    for (const c of ['msgs', 'feed', 'top', 'points', 'boss', 'cross', 'banner', 'center', 'bar', 'full', 'scores', 'net']) {
+    for (const c of ['scope', 'lobby', 'msgs', 'feed', 'top', 'points', 'zone', 'boss', 'cross', 'capture', 'banner', 'center', 'bar', 'full', 'scores', 'net']) {
       const d = document.createElement('div');
       d.className = `h-${c}`;
       host.append(d);
@@ -103,6 +137,10 @@ export class Hud {
     this.el.scores.hidden = true;
     this.el.boss.hidden = true;
     this.el.net.hidden = true;
+    this.el.scope.hidden = true;
+    this.el.lobby.hidden = true;
+    this.minimap = new Minimap(this.font);
+    host.insertBefore(this.minimap.el, this.el.banner);
     this.paintBarFill();
     this.resize();
     addEventListener('resize', this.resize);
@@ -111,8 +149,9 @@ export class Hud {
   private readonly resize = (): void => {
     this.k = Math.max(2, Math.min(5, Math.round(innerHeight / 360)));
     this.host.style.setProperty('--k', String(this.k));
+    this.minimap?.setK(this.k);
     // text canvases carry their own pixel sizes
-    this.lastTop = this.lastCenter = this.lastFull = '';
+    this.lastTop = this.lastCenter = this.lastFull = this.lastCapture = this.lastZone = this.lastPoints = this.lastLobby = '';
   };
 
   /** The strip either side of the status bar: Doom's border flat, darkened. */
@@ -151,6 +190,26 @@ export class Hud {
     return d;
   }
 
+  /**
+   * A line that fits `maxPx`: a whole HUD scale smaller first, then (still too long, e.g.
+   * two long names) squeezed to the width, so nothing is cut off at the screen's edge.
+   */
+  private fitLine(parts: [string, string | undefined][], scale: number, maxPx: number): HTMLElement {
+    let d = this.line(parts, scale);
+    const width = (el: HTMLElement): number => [...el.children].reduce((w, c) => w + parseFloat((c as HTMLElement).style.width || '0'), 0);
+    let w = width(d);
+    if (w > maxPx && scale > 1) { d = this.line(parts, scale - 1); w = width(d); }
+    if (w > maxPx) {
+      const f = maxPx / w;
+      for (const c of d.children) {
+        const e = c as HTMLElement;
+        e.style.width = `${parseFloat(e.style.width) * f}px`;
+        e.style.height = `${parseFloat(e.style.height) * f}px`;
+      }
+    }
+    return d;
+  }
+
   // ------------------------------------------------------------------ transient lines
 
   /** A big line across the middle of the screen (a boss arrives, a round is won), `ms` long. */
@@ -175,7 +234,7 @@ export class Hud {
 
   /** An obituary split into pieces so names can wear their colours. */
   obituary(pieces: [string, string | undefined][], mine: boolean): void {
-    const d = this.line(pieces, Math.max(2, this.k - 1));
+    const d = this.fitLine(pieces, Math.max(2, this.k - 1), innerWidth * 0.44);
     if (mine) d.style.filter = 'drop-shadow(0 0 4px rgba(255, 200, 80, .55))';
     this.push(this.el.feed, d, 6000, 5);
   }
@@ -219,6 +278,12 @@ export class Hud {
 
   showScores(on: boolean): void { this.scoresVisible = on; this.scoresAt = 0; }
 
+  /** The map the minimap draws (war and battle royale rooms; null hides it). */
+  setMinimap(map: MapData | null): void { this.minimap.setMap(map); }
+
+  /** `M`: the large map, or back to the corner. */
+  toggleMap(): void { this.minimap.toggleBig(); }
+
   setRows(rows: ScoreRow[]): void { this.rows = rows; }
 
   update(s: HudState, now: number): void {
@@ -226,7 +291,10 @@ export class Hud {
     const full = s.style === 'full';
     this.el.bar.hidden = full || !pv;
     this.el.full.hidden = !full || !pv;
-    this.el.cross.hidden = !pv || s.dead || s.intermission;
+    const zoom = !pv || s.dead || s.intermission ? 0 : Math.max(0, Math.min(1, s.zoom ?? 0));
+    this.el.cross.hidden = !pv || s.dead || s.intermission || zoom > 0.35;
+    this.el.scope.hidden = zoom <= 0.02;
+    if (zoom > 0.02) this.el.scope.style.opacity = String(Math.min(1, zoom * 1.25));
     if (pv && !full) this.bar.draw(pv, s.face, s.color);
     if (pv && full) this.drawFull(pv);
 
@@ -234,12 +302,18 @@ export class Hud {
     const mm = Math.floor(Math.max(0, s.timeLeft) / 60), ss = Math.floor(Math.max(0, s.timeLeft) % 60);
     const clock = `${mm}:${String(ss).padStart(2, '0')}`;
     const m = s.mode;
-    const top = `${s.frags}|${s.rank}|${s.total}|${clock}|${s.intermission}|${this.k}|${m ? `${m.score}|${m.round}|${m.alive}|${m.phase}` : ''}`;
+    const br = m?.br ?? null;
+    const top = `${s.frags}|${s.rank}|${s.total}|${clock}|${s.intermission}|${this.k}|${m ? `${m.score}|${m.round}|${m.alive}|${m.phase}` : ''}|${br ? `${br.alive}|${br.kills}|${br.grenades}` : ''}`;
     if (top !== this.lastTop) {
       this.lastTop = top;
       const t = this.el.top;
       t.innerHTML = '';
-      if (m && m.teams) {
+      if (br) {
+        t.append(this.line([['ALIVE ', GREY], [String(br.alive), WHITE]]));
+        t.append(this.line([['KILLS ', GREY], [String(br.kills), GOLD]]));
+        if (br.grenades !== null) t.append(this.line([['GRENADES ', GREY], [String(br.grenades), br.grenades > 0 ? WHITE : GREY]]));
+        if (s.intermission) t.append(this.line([['NEXT ', GREY], [clock, WHITE]]));
+      } else if (m && m.teams) {
         if (m.mode === 2) t.append(this.line([['ROUND ', GREY], [String(Math.max(1, m.round)), WHITE]]));
         const unit = m.mode === 3 ? ' TICKETS' : '';
         t.append(this.line([['RED ', TEAM_CSS[0]], [String(m.score[0]), WHITE], ['  BLUE ', TEAM_CSS[1]], [String(m.score[1]), WHITE], [unit, GREY]]));
@@ -249,15 +323,24 @@ export class Hud {
         t.append(this.line([['FRAGS ', GREY], [String(s.frags), GOLD]]));
         if (s.rank > 0) t.append(this.line([[ordinal(s.rank).toUpperCase(), WHITE], [` OF ${s.total}`, GREY]]));
       }
-      t.append(this.line([[s.intermission ? 'NEXT ' : '', GREY], [clock, s.timeLeft < 30 && !s.intermission ? RED : WHITE]]));
+      if (!br) t.append(this.line([[s.intermission ? 'NEXT ' : '', GREY], [clock, s.timeLeft < 30 && !s.intermission ? RED : WHITE]]));
     }
-    this.drawPoints(m);
+    this.drawPoints(m, now);
     this.drawBoss(m);
+    this.drawZoneLine(br, s.intermission);
+    this.drawCapture(m, br, !!pv && !s.dead && !s.intermission, now);
+    this.drawLobby(br?.lobby ?? null);
+    // (the purple storm tint outside the zone is the renderer's: src/render/br)
+    const map = s.intermission ? null : (m?.minimap ?? null);
+    this.host.classList.toggle('with-map', !!map && this.minimap.hasMap);
+    this.minimap.draw(map, now);
 
     // center prompts
     let center = '';
     if (!s.locked && !s.intermission) center = 'click';
     else if (m && m.mode === 2 && m.phase === 1) center = `freeze|${m.round}|${Math.ceil(m.phaseLeft)}`;
+    else if (br && m && m.phase === 1) center = `brfreeze|${Math.ceil(m.phaseLeft)}`;
+    else if (br && s.dead) center = `brdead|${br.placed}|${m?.spectating ?? ''}|${s.killer ?? ''}`;
     else if (s.dead && m?.spectating) center = `spec|${m.spectating}`;
     else if (s.dead && m?.spawnChoices) center = `spawn|${m.spawnChoices.join(',')}|${s.killer ?? ''}`;
     else if (s.dead) center = `dead|${s.killer ?? ''}|${s.respawnReady}`;
@@ -272,6 +355,18 @@ export class Hud {
       } else if (center.startsWith('freeze') && m) {
         c.append(this.text(`ROUND ${Math.max(1, m.round)}`, GOLD, this.k + 2));
         c.append(this.text(`FIGHT IN ${Math.ceil(m.phaseLeft)}`, WHITE, this.k + 1));
+      } else if (center.startsWith('brfreeze') && m) {
+        c.append(this.text('LAST MARINE STANDING WINS', GOLD, this.k + 1));
+        c.append(this.text(`GO IN ${Math.ceil(m.phaseLeft)}`, WHITE, this.k + 1));
+      } else if (center.startsWith('brdead') && br) {
+        if (br.placed !== null) {
+          c.append(this.line([['YOU PLACED ', WHITE], [`#${br.placed}`, br.placed <= 3 ? GOLD : RED]], this.k + 2));
+          if (s.killer) c.append(this.line([['FRAGGED BY ', RED], [s.killer, WHITE]]));
+        } else c.append(this.text('WAITING FOR THE NEXT MATCH', GOLD, this.k + 1));
+        if (m?.spectating) {
+          c.append(this.line([['SPECTATING ', GREY], [m.spectating, WHITE]]));
+          c.append(this.text('FIRE TO WATCH SOMEONE ELSE', GREY));
+        }
       } else if (center.startsWith('spec') && m) {
         c.append(this.text('YOU ARE OUT THIS ROUND', RED, this.k + 1));
         c.append(this.line([['SPECTATING ', GREY], [m.spectating ?? '', WHITE]]));
@@ -289,6 +384,8 @@ export class Hud {
     // scoreboard: held Tab, or the intermission
     const show = this.scoresVisible || s.intermission;
     this.el.scores.hidden = !show;
+    // the scoreboard carries the headline then; a banner would sit half under it
+    this.el.banner.hidden = show;
     this.el.center.hidden = show;
     if (show && now - this.scoresAt > 250) { this.scoresAt = now; this.drawScores(s); }
 
@@ -391,28 +488,134 @@ export class Hud {
     }
   }
 
-  /** War: the capture points, a letter each in its owner's colour, with the capture progress under it. */
-  private drawPoints(m: ModeHud | undefined): void {
+  /**
+   * War: the capture points, a letter each in its owner's colour, the capture progress
+   * under it filling from the side of the team gaining. A point being taken blinks in
+   * the attacker's colour; one with both teams inside says so under the strip.
+   */
+  private drawPoints(m: ModeHud | undefined, now: number): void {
     const box = this.el.points;
     const pts = m && m.mode === 3 ? m.points : [];
-    const key = `${pts.map((p) => `${p.owner}:${Math.round(p.progress / 10)}`).join(',')}|${this.k}`;
+    const blinkOn = Math.floor(now / 260) % 2 === 0;
+    const states = pts.map((p) => pointState(p));
+    const key = `${pts.map((p, i) => `${p.owner}:${Math.round(p.progress / 5)}:${states[i].blink ? (blinkOn ? 1 : 2) : 0}:${states[i].contested}`).join(',')}|${this.k}`;
     box.hidden = !pts.length;
     if (key === this.lastPoints) return;
     this.lastPoints = key;
     box.innerHTML = '';
+    const row = document.createElement('div');
+    row.className = 'pts';
+    const contested: string[] = [];
     pts.forEach((p, i) => {
+      const st = states[i];
       const d = document.createElement('div');
       d.className = 'pt';
-      d.style.borderColor = p.owner >= 0 ? TEAM_CSS[p.owner] : 'rgba(255,255,255,.35)';
-      d.style.background = p.owner >= 0 ? `${TEAM_CSS[p.owner]}55` : 'rgba(0,0,0,.45)';
-      d.append(this.text(POINT_NAMES[i] ?? '?', p.owner >= 0 ? WHITE : GREY));
+      const lit = st.blink && blinkOn;
+      const css = lit ? st.attackerCss : p.owner >= 0 ? TEAM_CSS[p.owner] : null;
+      d.style.borderColor = css ?? 'rgba(255,255,255,.35)';
+      d.style.background = css ? `${css}${lit ? '99' : '55'}` : 'rgba(0,0,0,.45)';
+      d.append(this.text(POINT_NAMES[i] ?? '?', p.owner >= 0 || lit ? WHITE : GREY));
       const bar = document.createElement('i');
       const toward = p.progress < 0 ? 0 : 1;
       bar.style.width = `${Math.abs(p.progress)}%`;
       bar.style.background = TEAM_CSS[toward];
+      // red fills from the left, blue from the right
+      if (toward === 0) bar.style.left = '0'; else bar.style.right = '0';
       d.append(bar);
-      box.append(d);
+      row.append(d);
+      if (st.contested) contested.push(POINT_NAMES[i] ?? '?');
     });
+    box.append(row);
+    if (contested.length) box.append(this.line([['CONTESTED ', GOLD], [contested.join(' '), WHITE]], Math.max(1, this.k - 1)));
+  }
+
+  /** Battle royale: the zone line at the top centre. */
+  private drawZoneLine(br: BrHud | null, intermission: boolean): void {
+    const box = this.el.zone;
+    const text = br && !intermission ? br.zoneLine : '';
+    box.hidden = !text;
+    const key = `${text}|${this.k}`;
+    if (key === this.lastZone) return;
+    this.lastZone = key;
+    box.innerHTML = '';
+    if (text) box.append(this.text(text, text.includes('CLOSING') ? RED : text.startsWith('FINAL') ? GOLD : WHITE));
+  }
+
+  /**
+   * Under the crosshair: in war, the point we stand in ("CAPTURING B" and a bar);
+   * in battle royale, "OUTSIDE THE ZONE" while we are.
+   */
+  private drawCapture(m: ModeHud | undefined, br: BrHud | null, alive: boolean, now: number): void {
+    const box = this.el.capture;
+    const ip = alive && m && m.mode === 3 ? m.inPoint ?? null : null;
+    const out = alive && !!br?.outside;
+    const prompt = br?.prompt ?? null;
+    const blinkOn = Math.floor(now / 400) % 2 === 0;
+    let key = '';
+    if (prompt) key = `q|${prompt}|${blinkOn}`;
+    else if (ip) key = `p|${ip.index}|${ip.state}|${Math.round(ip.progress)}`;
+    else if (out) key = `z|${br!.dps}|${blinkOn}`;
+    key += `|${this.k}`;
+    box.hidden = !ip && !out && !prompt;
+    if (key === this.lastCapture) return;
+    this.lastCapture = key;
+    box.innerHTML = '';
+    if (prompt) {
+      box.append(this.text(prompt, blinkOn ? GOLD : WHITE, this.k + 1));
+    } else if (ip && m) {
+      const letter = POINT_NAMES[ip.index] ?? '?';
+      const label = ip.state === 'SECURED' ? `${letter} SECURED` : `${ip.state} ${letter}`;
+      const tint = ip.state === 'CONTESTED' ? GOLD : ip.state === 'SECURED' ? '#7cff6b' : m.myTeam >= 0 ? TEAM_CSS[m.myTeam] : WHITE;
+      box.append(this.text(label, tint));
+      const bar = document.createElement('div');
+      bar.className = 'cbar';
+      const fill = document.createElement('i');
+      const toward = ip.progress < 0 ? 0 : 1;
+      fill.style.width = `${Math.min(100, Math.abs(ip.progress))}%`;
+      fill.style.background = TEAM_CSS[toward];
+      if (toward === 0) fill.style.left = '0'; else fill.style.right = '0';
+      bar.append(fill);
+      box.append(bar);
+    } else if (out && br) {
+      box.append(this.text('OUTSIDE THE ZONE', blinkOn ? '#e070ff' : '#ff8a6a', this.k + 1));
+      box.append(this.text(br.dps > 0 ? `-${br.dps} HEALTH A SECOND` : 'GET INSIDE THE CIRCLE', GREY));
+    }
+  }
+
+  /**
+   * Battle royale v2, phase 4: who is in the match (humans first), when the dropship
+   * leaves, and the keys worth knowing.
+   */
+  private drawLobby(lobby: BrHud['lobby']): void {
+    const box = this.el.lobby;
+    box.hidden = !lobby;
+    if (!lobby) { this.lastLobby = ''; return; }
+    const key = `${Math.ceil(lobby.secondsLeft)}|${lobby.players.length}|${lobby.players.slice(0, 40).map((p) => p.name).join(',')}|${this.k}`;
+    if (key === this.lastLobby) return;
+    this.lastLobby = key;
+    box.innerHTML = '';
+    const s = Math.max(0, Math.ceil(lobby.secondsLeft));
+    box.append(this.line([['DROPSHIP LEAVES IN ', GREY], [`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, GOLD]], this.k + 1));
+    box.append(this.text(`${lobby.players.length} MARINES IN THIS MATCH`, WHITE));
+    const list = document.createElement('div');
+    list.className = 'plist';
+    const small = Math.max(1, this.k - 1);
+    const shown = lobby.players.slice(0, 32);
+    for (const p of shown) {
+      const row = document.createElement('div');
+      const sw = document.createElement('i');
+      sw.style.background = PLAYER_COLORS[p.color]?.css ?? '#888';
+      row.append(sw, this.text(p.name, p.me ? GOLD : p.human ? WHITE : GREY, small));
+      list.append(row);
+    }
+    box.append(list);
+    if (lobby.players.length > shown.length) box.append(this.text(`AND ${lobby.players.length - shown.length} MORE`, GREY, small));
+    const tips = document.createElement('div');
+    tips.className = 'tips';
+    for (const t of ['USE: OPEN A CRATE / ENTER A VEHICLE', 'G: THROW A GRENADE', 'RIGHT MOUSE: ZOOM', '2: PISTOL / SNIPER', 'JUMP: LEAVE THE SHIP / OPEN THE CHUTE', 'M: MAP']) {
+      tips.append(this.text(t, GREY, small));
+    }
+    box.append(tips);
   }
 
   /** Random bosses: the boss's name and a health bar, while one lives. */

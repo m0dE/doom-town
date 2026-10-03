@@ -5,7 +5,7 @@ import { Wad } from '../../../src/wad/wad.ts';
 import { parsePnames, parseTextureLump } from '../../../src/wad/texturedefs.ts';
 import { ROOT } from './paths.mts';
 
-export const FREEDOOM2 = '/app/data/home/doom-ref/freedoom-0.13.0/freedoom2.wad';
+export const FREEDOOM2 = join(ROOT, 'assets/freedoom2.wad');
 
 export function textureInfo(): { width: Map<string, number>; flats: Set<string>; extraTex: Set<string>; extraFlats: Set<string> } {
   const width = new Map<string, number>();
@@ -21,7 +21,8 @@ export function textureInfo(): { width: Map<string, number>; flats: Set<string>;
     }
     for (const f of w.namespace('F').keys()) if (!flats.has(f)) { flats.add(f); if (extra) extraFlats.add(f); }
   };
+  for (const f of [join(ROOT, 'assets/freedm.wad'), FREEDOOM2]) if (!existsSync(f)) throw new Error(`${f.slice(ROOT.length + 1)} missing: run \`npm run fetch\` first`);
   load(join(ROOT, 'assets/freedm.wad'), false);
-  if (existsSync(FREEDOOM2)) load(FREEDOOM2, true);
+  load(FREEDOOM2, true);
   return { width, flats, extraTex, extraFlats };
 }

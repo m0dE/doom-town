@@ -248,6 +248,443 @@ As implemented (sim_version 3):
   has the same x/y). The dropped BFG gives the weapon + 1 clip of cells and is removed;
   the cell pack is a normal (dropped) pickup.
 
+### War minimap and contested points (requested 2026-10-03)
+
+The user: "in a war map, improve UI to clearly indicate which part of the map is being
+overridden maybe show a minimap at top right". Client only, no sim change.
+
+- **Minimap** (War and Battle royale rooms), top right: the whole map north-up, its
+  one-sided lines drawn once to an offscreen canvas; capture points as circles filled
+  with the owner's colour (grey neutral), lettered, with a capture-progress ring in the
+  capturing team's colour; teammates as dots in the team colour (enemies are never
+  shown); ourselves as a gold arrow. A point being taken from its owner, or with both
+  teams inside, blinks. Battle royale draws the safe zone (white circle, the area
+  outside it tinted red) and the next zone (dashed). `M` toggles a large centred map.
+- **Point strip**: a point under capture blinks in the attacker's colour; both teams
+  inside reads "CONTESTED"; the bar fills toward the team gaining.
+- **Alerts**: when an enemy starts taking a point our team owns: a message "POINT C IS
+  UNDER ATTACK" (once per point per 10 s). Standing inside a point: a bar under the
+  crosshair, "CAPTURING B", "DEFENDING B", "CONTESTED B", or "B SECURED".
+
+### Battle royale (requested 2026-10-03)
+
+The user: "a battle royale gameplay where you're in this vast map with many buildings in
+it. PUBG style. you open crate and bunch of items will fall out like health/armor
+shards, sniper, etc." Prior art: DooM Royale (Zandronum, 2018, up to 64 players).
+
+| mode | id | slots | teams | rules |
+|---|---|---|---|---|
+| Battle royale | 4 | 64 | – | one life; a shrinking zone; crates spill loot; last marine standing wins |
+
+- **Room names**: `br`, `royale`, `battle`, `pubg` pick it (`na-br-1`). Rotation key
+  `battleRoyale`: `BR01`. No bosses; players collide (solid) unless the name says `ghost`.
+- **Match**: a 10 s freeze phase (PH_FREEZE, phase 1; everyone is placed on spawn
+  spots spread across the map, may look, not move or fire), then PH_PLAY until one
+  player is alive or 15 min (`match_tics` default 35*900) pass, then the intermission
+  (winner = the last alive slot; at the time limit the live player with the most frags,
+  -1 if nobody lives) and the next match. Starting kit: fist, pistol, 20 bullets, 100
+  health, no armor.
+- **One life**: no respawn during PH_PLAY (like elimination); the dead spectate an
+  alive player (PlayerView[50], attack cycles). A joiner, or a bot slot a human takes
+  over mid-match, waits for the next match. `PlayerView[33]` frags = kills.
+- **Items**: nothing on the map respawns and weapons don't stay (a weapon picked up is
+  gone). Spilled and placed items are all one-shot.
+- **Crates**: thing 9020 → `MT_CRATE` (mobjtype **137**, appended after vanilla's 137
+  types), radius 20, height 40, MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD, health 25. A crate opens
+  when it is destroyed (any damage) or when a live player presses *use* facing it
+  within 96 units (±45°). Opening removes it, plays a wooden-break sound (one the base pak ships,
+  e.g. `sfx::pstop`) and spills 4–7 items
+  at its centre, each with a P_Random momentum (|momx|,|momy| ≤ 5 units/tic, momz 4–8),
+  MF_DROPPED. Loot table (weights out of 100): health bonus ×3 (15), armor bonus ×3
+  (15), stimpack (10), medikit (6), green armor (5), blue armor (1), shotgun + shells
+  (8), super shotgun (5), chaingun (7), rocket launcher (4), plasma gun (3), BFG (0.5,
+  i.e. 1 in 200), box of bullets (6), box of shells (5), box of rockets (3), cell (2),
+  backpack (3), berserk (2), soulsphere (0.5) — the remainder rounds the weights to 100.
+  Every crate drops at least one health or armor bunch. Event **17** crate opened
+  (a = opener slot or -1, b = items spilled, x/y/z = crate centre).
+- **Sniper (scope)**: buttons bit 3 = *zoom* (held; the client binds the right mouse
+  button and `Z`, and narrows the FOV to 25° while held). In battle royale, while zoomed:
+  pistol and chaingun bullets have no spread, and the pistol does ×3 damage (a marksman
+  shot, 15–45); the player moves at half speed. Outside battle royale the bit is ignored
+  and the client does not zoom.
+- **Zone**: a circle. Stage 0 covers the whole map (centre = the map's bounding-box
+  centre, radius = its half diagonal). Each stage waits, then shrinks linearly to the
+  next circle, which lies inside the current one, centred on a spawn spot picked with
+  P_Random among those with dist(spot, centre) <= r_cur − r_next (else the same centre).
+
+  | stage | wait | shrink | radius after (of stage-0 radius) | damage / s outside |
+  |---|---|---|---|---|
+  | 1 | 60 s | 60 s | 60 % | 1 |
+  | 2 | 45 s | 45 s | 35 % | 2 |
+  | 3 | 40 s | 40 s | 18 % | 4 |
+  | 4 | 30 s | 30 s | 8 % | 7 |
+  | 5 | 30 s | 30 s | 0 | 10 |
+
+  The clock starts at PH_PLAY. Outside the current circle, a live player takes the
+  stage's damage every 35 tics (damage of the stage being waited for/shrunk; stage 1's
+  values during stage 1), through P_DamageMobj with no source, armor ignored. Means of
+  death **16** zone ("%o was caught outside the zone"). Event **16** zone (a = stage,
+  b = 0 waiting / 1 shrinking, c = tics until the state ends), sent when the state
+  changes.
+- **world_view_match**: after the boss words, always present (zeros outside battle
+  royale), `BR_WORDS = 11`: 0 zone x, 1 y, 2 radius (fixed, current, interpolated while
+  shrinking), 3 next x, 4 next y, 5 next radius, 6 stage (1..5, 6 = closed), 7 state (0
+  waiting, 1 shrinking, 2 closed), 8 tics until the state ends, 9 alive players,
+  10 damage per second outside.
+- **Bots**: in PH_PLAY a bot outside the next circle (or the current one while
+  shrinking) paths toward the circle's centre, with priority over items; otherwise
+  crates within reach are item goals: walk up, face, press use. Spilled loot is picked
+  up by the ordinary item goals.
+- **Map BR01 "Doom Town"** (`tools/maps/br01.mts`): about 16384 × 16384 units, a town of
+  streets and 40+ enterable buildings (houses, shops, a church, warehouses, an office
+  block with stairs to a roof, a factory), outskirts with fields, hills, a river with
+  bridges and a few compounds. ~160 crates (thing 9020), mostly indoors; sparse ground
+  loot (bonuses, clips, a few shotguns/chainguns); 64+ DM starts spread across the
+  whole map. Wall texture `CRATE1` and flat `CRATOP2` appear in it (crate stacks), so
+  the crate model's textures are in the map's art pak.
+- **Client**: a crate is drawn as a 3D box (sides `CRATE1`, top `CRATOP2`) instead of a
+  sprite. HUD: top "ALIVE n", "KILLS n", the zone line ("ZONE SHRINKS IN 0:42" /
+  "ZONE CLOSING" / "FINAL ZONE"); "OUTSIDE THE ZONE" in red while outside; dead:
+  "YOU PLACED #n" + spectating; intermission: "<NAME> IS THE LAST MARINE STANDING".
+- sim_version 8.
+
+As implemented (sim_version 8, `sim/src/royale.rs`):
+
+- `MT_CRATE` = 137 with one state `S_CRATE` = 967 (sprite `BAR1` frame A as the fallback;
+  NUMMOBJTYPES 138, NUMSTATES 968), appended by `sim/gen/gen.py`. Thing 9020 spawns a
+  crate whatever its skill bits. Crates exist in any mode whose map has them.
+- **Use**: the press goes to the nearest live crate whose centre is within 116 units
+  (96 from its edge), within ±45° of the facing, overlapping in height and in sight;
+  it takes the press before the lines. **Damage**: any damage opens it (opener = the
+  damage source's slot, -1 for none); nothing else of P_DamageMobj applies.
+- **Loot**: 4–7 *entries* per crate; an entry is one row of the table, so "health bonus
+  ×3" spawns 3 things and "shotgun + shells" 2 (event 17 `b` = things spawned, 4..21).
+  The first entry is always drawn from the six health/armor rows. The listed weights sum
+  to 101, so they are used as given (half-percent units out of 202). Things spawn at the
+  crate's mid-height with momx/momy = (P_Random-128)·5/128 units/tic, momz = 4 +
+  P_Random/64 units/tic, MF_DROPPED; they fly, land and slide to rest under the usual
+  P_XYMovement / P_ZMovement rules. Sound: `sfx::pstop` (DSPSTOP) at the crate centre
+  (event 1, origin 0).
+- **Weapons in battle royale** (placed or spilled): taken and removed like any item; give
+  the weapon (if not owned) plus 2 clips of its ammo (vanilla's non-deathmatch amount:
+  shotgun/SSG 8 shells, chaingun 20 bullets, RL 2 rockets, plasma/BFG 40 cells). Nothing
+  respawns (no item queue in battle royale).
+- **Match**: the map (crates and items) is rebuilt at every match start, so each match
+  starts with full crates (event 9 only when the map actually changes). (sim_version 8:
+  freeze = phase 1; since 9 the lobby and the drop replace it, see v2 below), then PH_PLAY with `phase_left` = `match_tics` counted from PH_PLAY. The match ends at
+  the end of the tic where <= 1 player is alive (winner = that slot, -1 if none) or at
+  the time limit (the live player with the most frags, lowest slot on ties). In battle
+  royale suicides and zone deaths do not subtract a frag (frags = kills).
+- **Placement** (the lobby on a map without lobby spots): each player takes the spawn spot farthest from
+  everyone already placed (a random one of the best 8, P_Random), so 64 players spread.
+- **Zone**: the stage-0 circle and stage 1's target are set at match start (one P_Random
+  pair per pick), so during the freeze the words read stage 1, waiting, 60 s. Event 16
+  is sent at PH_PLAY start and at every state change (`b` = 2 when closed; x/y = the
+  current centre). Damage every 35 tics of PH_PLAY (first at 1 s); once closed (radius
+  0) every live player takes 10/s. `zone` damage ignores armor but not
+  invulnerability. Word 10 (damage/s) reads 1 during the freeze.
+- **Zoom** (bit 3) is ignored outside battle royale. Pistol damage ×3 = 15/30/45,
+  chaingun and pistol shots without spread, thrust 1741/2 per move unit.
+- **Bots**: "urgent" = outside the next circle while waiting, outside the current one
+  while shrinking or closed; then they head for a spawn spot inside half that circle,
+  re-checking every second, and keep running their route while fighting. Otherwise
+  their item goals include crates (value 70 unarmed / 30 armed, + missing health / 3),
+  only items inside the current circle count; within 100 units of a goal crate they
+  face it and tap use. Bots don't zoom. Dead bots don't press attack.
+- Tests: `sim/tests/royale.rs` (64 bots on WAR01 with crates added next to spawn spots:
+  a whole match to a last marine standing, the zone stages, crates opened by use, loot
+  picked up, crates back next match; twin/clone/deserialize determinism; use/damage
+  opening, loot coming to rest and picked up; zoom; zone damage/armor/obituary; late
+  joiner; a BR01 smoke when `public/maps/BR01.map.wad` exists).
+
+### Battle royale v2: lobby, dropship, parachutes, vehicles, sniper, grenades, storm (requested 2026-10-03)
+
+The user: "we need more weapons in battle royale like sniper with zoom, ridable
+vehicles, etc. there needs to be clear storm closing in. lobby before the game
+launches. parasuting down, etc etc. it needs to be pretty comprehensive" and "all this
+should be contained within a single map file". Supersedes the 10 s freeze above.
+
+- **Match flow**: phase 4 **lobby** (45 s) → phase 5 **drop** (the dropship crossing)
+  → phase 0 play (zone clock starts) → phase 3 intermission. The freeze phase is not
+  used in battle royale.
+- **Lobby** (phase 4): everyone spawns on the map's lobby island — things **9030**
+  (lobby spots), a walled area away from the playfield (not inside the zone's
+  bounding box; the zone and the bus use only DM starts / non-lobby spots). Players move,
+  jump and shoot freely but nothing does damage (P_DamageMobj on players is a no-op in
+  the lobby); everyone has fist + pistol + 200 bullets there for fun; on leaving the
+  lobby the kit resets to the starting kit. Joiners arriving in the lobby play this
+  match. PlayerView[44]/match words show the countdown.
+- **Dropship / bus** (phase 5): a straight flight line across the playfield through a
+  P_Random point within 25 % of the centre, at a P_Random angle, at altitude
+  `drop_alt` (default 4096 units above the highest floor), 24 units/tic. Everyone is in
+  it: their bodies are taken out of the world (no mobj; PlayerView[1] = 0) and their
+  position is the ship's. A `MT_DROPSHIP` mobj (type **138**) is flown along the line,
+  MF_NOBLOCKMAP|MF_NOGRAVITY|MF_NOCLIP, positioned directly (no P_TryMove; z
+  unconstrained). *Jump* or *use* jumps out; at the end of the line everyone left is
+  ejected. Phase 5 ends when the ship reaches the end of the line.
+- **Skydiving**: a player out of the ship is "airborne" — still no body in the world;
+  the sim keeps a virtual position (x, y, z fixed) and moves it: freefall momz −24
+  units/tic, horizontal steer 10 units/tic along the view yaw from forward/side;
+  the parachute opens automatically 512 units above the floor below (or on *jump* when
+  more than 256 above it): fall −5 units/tic, steer 6. Landing (z at or below the floor
+  of the sector under (x, y)): the body is spawned there if the spot fits (P_CheckPosition,
+  room for the height), else at the nearest spawn spot that fits; then the starting kit.
+  A `MT_PARACHUTER` mobj (type **139**, MF_NOBLOCKMAP|MF_NOGRAVITY|MF_NOCLIP, never
+  hit) mirrors each airborne player so others can see them; MobjView[7] carries the slot
+  like a player body; its frame A = freefall, B = parachute open.
+  PlayerView appends: **51** air state (0 none, 1 in ship, 2 freefall, 3 parachute,
+  4 vehicle driver), **52/53/54** virtual x, y, z (fixed) while 1–3, **55** vehicle mobj
+  id while driving (0 none). The camera follows the virtual position.
+- **Vehicles**: things **9040** spawn `MT_BUGGY` (type **140**): radius 32, height 48,
+  MF_SOLID|MF_SHOOTABLE, health 400. *Use* within 96 units enters it (one seat):
+  the driver's body is unlinked from the blockmap and rides — the buggy moves with
+  car physics (forward/back accelerate up to 28 units/tic, side steers the heading, the
+  heading is the buggy's, not the mouse's, mouse yaw is free look), through P_TryMove at
+  the buggy's radius (stairs ≤ 24 like players; it can't climb more), and the driver
+  is placed at the buggy each tic. Hitting a player at > 12 units/tic does speed/2
+  damage and knocks them (MOD **17** roadkill "%o was run over by %k"). Damage aimed at
+  the driver hits the buggy; at 0 health it explodes (P_RadiusAttack 128, the driver
+  ejected and takes the blast) and leaves nothing. *Use* again exits to the left side
+  (or any free side). Driver can't fire. Respawn: none within a match; every match the
+  map's buggies are back. Bots ignore vehicles except avoiding them.
+- **Sniper rifle**: weapontype **9** (`wp_sniper`), slot key **2** toggles pistol ↔
+  sniper (like 3 toggles shotgun ↔ SSG). Ammo: bullets, 5 per shot. One hitscan of
+  70 + P_Random%31 damage (one-shots 100 hp with no armor most of the time), no spread
+  when zoomed, ±(spread of the shotgun) when not; refire 50 tics (1.4 s). Thing pickup
+  `MT_SNIPER` (type **141**, doomednum 9050, gives 10 bullets). Sprites (new sprite names
+  appended to SPRNAMES): **SNPR** (pickup, frame A), **SNPG** (weapon: A ready, B fire,
+  C–D bolt), **SNPF** (flash A). The client generates these patches in code (Doom-style
+  palette pixel art) and adds them to the WAD before the atlas is built; the sim only
+  uses the names. While zoomed with the sniper the client FOV is 12° (other weapons 25°).
+- **Grenades**: an inventory count (max 5), not a weapon: buttons bit **10** throws one
+  (key `G`), 30 tics cooldown. `MT_GRENADE` (type **142**): a missile with gravity that
+  bounces off floors/walls (momentum halves each bounce), explodes 70 tics after the
+  throw (P_RadiusAttack 160, MOD 5-like **18** "%o caught %k's grenade"). Pickup
+  `MT_GRENADEPACK` (type **143**, doomednum 9051, +2 grenades). Sprites **GREN** (in
+  flight / pickup, frame A). PlayerView **56** = grenades.
+- **Loot** gains: sniper rifle (5), grenade pack ×1 (8); weights renormalised.
+- **Supply drops**: at the start of zone stages 2, 3 and 4 a supply drop lands at a
+  P_Random spawn spot inside the next circle: event **18** (x, y) 10 s before, then an
+  `MT_CRATE` with flag "supply" (MobjView flags bit MF_SUPPLY = 0x20000000 —
+  unused by vanilla) whose loot table is the rare items (sniper, BFG, blue armor,
+  megasphere/soulsphere, plasma, RL + rockets, grenades ×3). The client draws it red with
+  a smoke column and marks it on the minimap.
+- **Storm** (the zone, client): a translucent, animated purple-blue wall (cylinder from
+  well below the lowest floor to far above the highest ceiling) at the current radius,
+  visible from anywhere; outside it the screen is tinted purple with a storm sound
+  loop; the next circle shows as a white ring on the minimap and a faint ground ring.
+  "THE STORM IS CLOSING IN" banner when shrinking starts.
+- **Lobby UI** (client): during phase 4 a panel lists the players in the match (humans
+  first), "DROPSHIP LEAVES IN 0:32", tips (keys: use = open crate / enter vehicle, G
+  grenade, right mouse zoom, jump = leave the ship / open chute). During phase 5 the
+  minimap shows the flight line and the ship; "PRESS JUMP TO DROP".
+- **world_view_match** BR words gain: 11 lobby/drop tics left, 12 ship x, 13 ship y,
+  14 ship dir x (fixed unit vector), 15 ship dir y, 16 supply drop x, 17 y (0/0 none),
+  18 supply drop state (0 none, 1 incoming, 2 landed). `BR_WORDS = 19`.
+- sim_version 9.
+
+As implemented (sim_version 9; `sim/src/drop.rs`, `sim/src/vehicle.rs`, `sim/src/royale.rs`):
+
+- **Numbers**: mobjtypes 137 crate, 138 dropship, 139 parachuter, 140 buggy, 141 sniper
+  rifle (9050), 142 grenade, 143 grenade pack (9051); states 967 S_CRATE, 968 S_DROPSHIP,
+  969/970 S_PARA_FALL/OPEN, 971 S_BUGGY, 972 S_SNIPERRIFLE, 973 S_GRENADE, 974
+  S_GRENADEPACK, 975–982 the sniper's psprite states; sprites 138 SNPR, 139 SNPG, 140
+  SNPF, 141 GREN (NUMSPRITES 142, NUMSTATES 983, NUMMOBJTYPES 144). Fallback sprites:
+  crate, dropship and buggy BAR1A; parachuter PLAYA (freefall) / PLAYB (chute) — the
+  client draws all four as models. The buggy also has MF_NOBLOOD (puffs, not blood).
+- **Phases**: 4 lobby, 5 drop. `phase_left` counts the lobby down, then the ship's tics
+  to the end of its line. Lobby spawns use things 9030 (any spawn spot if the map has
+  none); every spawn spot (DM starts included) within 512 units of the lobby spots'
+  box is dropped, and with a lobby the playfield box (zone stage 0, flight line,
+  skydiving clamp) is the spawn spots' box + 256. In the lobby nothing takes damage
+  (players, crates, buggies) and crates can't be used; kit fist + pistol + 200 bullets.
+- **Drop**: line through the stage-0 centre ± r0/4 (P_Random x, y), P_Random angle
+  (two bytes), from −r0 to +r0 along it (2·r0/24 tics; ~790 on BR01), at the highest
+  floor + `drop_alt`. Boarding (everyone not dead, waiting joiners included) resets the
+  kit (fist, pistol, `start_bullets`, no grenades). Leaving: an edge of *jump* or *use*.
+  Freefall starts 64 below the ship. The airborne position is clamped to the playfield
+  box. Landing triggers at the floor, or at a non-sky ceiling (no passing through roofs);
+  the spot must have sky above, 56 of headroom, be in the bots' main area, clear of
+  walls and things; else the nearest of the 64 closest spawn spots that fits; if none
+  fits, the player hovers and retries next tic. Landing emits event 5 with b = 2. The
+  ship is ejected at the end of its line and the phase turns to play (zone clock) even if
+  people are still under canopy. PlayerView[7] is the view yaw while airborne. The
+  dropship and parachuter mobjs skip the ordinary mobj thinker: they sit exactly at the
+  ship's / player's virtual position (MobjView x/y/z = PlayerView[52..54]).
+- **Buggy**: speed kept in the mobj's `movecount` (fixed), heading = its angle, driver in
+  `tracer`. Forward accelerates 1 unit/tic (to 28), back brakes 1.5 (to −10 reverse),
+  none coasts down 0.5; side turns up to 4°/tic (reversed in reverse), only on the
+  ground. Moves in ≤16-unit P_TryMove steps; a blocked step bounces speed to −¼. Roadkill
+  over 12 units/tic: speed/2 damage (inflictor the buggy, source the driver, MOD 17),
+  the victim is shoved, the buggy keeps ¾ of its speed. Exit: 56 units out to the left,
+  right, back or front (headroom, ≤ 24 step, clear); a press does nothing if none fits.
+  Explosion: driver ejected (forced), a 128 blast from an MT_GRENADE in S_EXPLODE1
+  (credited to whoever destroyed it). Zone damage still hits the driver. `vehicles: 0`
+  in the rules stops things 9040 from spawning. Use order: get out / crate / buggy / lines.
+- **Sniper**: S_SNIPER1 B 4 (fire) → C 23 → D 23 → A 5 (refire): a held trigger fires
+  every 50 tics. Range 4096. Sound `dshtgn`. Means of death **19** (new: sniper rifle).
+  Pickup message **32**; it gives 10 bullets (in every mode). The sniper sits after the
+  pistol in next/prev weapon order.
+- **Grenades**: thrown from eye height at 18 units/tic along the view (pitch) + 4 up
+  + the thrower's momentum; moves itself in ≤8-unit steps per axis, bounces off walls
+  (that axis ×−½), floors (momz ×−½ and momx/momy ×½ when falling faster than 3),
+  ceilings; rolls with friction; passes through things. At 70 tics: P_RadiusAttack 160
+  from the thrower (MOD 18), sound `rxplod`, S_EXPLODE2. Pack pickup message **33**, not
+  taken at 5. Throwing sound `sgcock`.
+- **Loot**: rows 19 sniper rifle (10) and 20 grenade pack (16) appended; weights are
+  relative (any total). Supply crates: 4 entries, equal odds, from sniper, BFG, blue
+  armor, megasphere, soulsphere, plasma gun, RL + box of rockets, 3 grenade packs (no
+  forced health row). Event 17 `c` = 1 for a supply crate.
+- **Supply drops**: at the start of stages 2, 3 and 4 (when they exist and `supply`):
+  a P_Random spawn spot inside the new next circle; event 18 (a = stage, b = 350, x, y);
+  the crate lands 10 s later (sound `barexp`), waiting up to 5 s more for the spot to be
+  clear of things; BR words 16–18 show it until it is opened.
+- **Rules block**: after the flags word (`seed`, `flags` must both be present before
+  it). Stage count (key 7) is applied first; new stages copy the last row; a count of 0
+  means the default stages. Values are clamped (stages ≤ 8, timings ≥ 1 tic, radius
+  0–1000 ‰ and never above the previous stage's, drop_alt 256–16384, start bullets
+  0–400, loot rows 0–10000; a crate's roll takes 24 random bits, so heavy tables reach
+  every row). A rules count or map count longer than the buffer is rejected (0). The rules travel in snapshots (`world_deserialize` restores them).
+- **map_load** takes the map's lumps as the contiguous run after THINGS (THINGS ...
+  BLOCKMAP, BEHAVIOR) and ignores everything else in the PWAD (MODINFO, TEXTURE1,
+  PNAMES, P_/F_ namespaces).
+- **Bots**: at the drop each picks (P_Random) a jump point uniformly over 10–95 % of the
+  line, then, of 12 P_Random points within 1800 units of it where a body can land (sky,
+  room), the one farthest from the landings the lower slots picked; it jumps when the
+  ship passes the point and steers there at full forward. For 3 s after landing a bot
+  armed with only fist/pistol starts no fight (it still shoots back at whoever hurts it).
+  While the zone waits, a bot outside the next circle only heads in once the wait left
+  is under its distance to the edge / 10 units per tic + 15 s; it then goes to one of
+  the 8 spawn spots inside ¾ of the circle nearest to it. In the lobby they wander
+  between lobby spots.
+- **Landing fallback**: when the spot under a skydiver doesn't fit, rings of 64, 128, 256
+  and 512 units (8 directions) are tried for a landable point before the nearest spawn
+  spot (BR01's generated spawn spots crowd into a few fields, so the old fallback piled
+  people up).
+- **Cost** (`cargo run --release --bin bench br01 900 <seed>`, a whole 64-bot match;
+  slow tics re-timed on copies, min of 3, because this 2-core machine is shared): native
+  avg 0.06 ms, p99 0.2–0.4 ms, max ~1 ms; wasm in Node (`tools/test-wasm.mjs`) avg
+  0.1 ms, p99 0.45 ms, max 1.1 ms. Raw timings on the loaded machine showed 8–28 ms
+  outliers that do not reproduce when the same tic is re-run: scheduler pauses.
+  On BR01, 56–62 of 64 are alive when the ship reaches the end of its line. They don't drive (a bot slot left at the wheel
+  gets out); they zoom with the sniper beyond 300 units, throw a grenade at 250–700
+  units now and then, and value snipers (70) and grenade packs (25).
+
+As implemented (client rendering; `src/render/br/`, all visual):
+
+- **Storm** (`storm.ts`): a 192-column cylinder at the current circle from the lowest floor
+  − 1024 to the highest ceiling + 12000, both sides, depth-tested, no depth write,
+  premultiplied blend (darkens what is behind, adds a rising 3D-noise purple), brighter
+  at grazing angles and in a band where it meets the floor (floor heights sampled per
+  column when the circle moves). The next circle: a 20-unit white curtain on the
+  ground. Outside the circle the composite pass tints the screen purple (`uStorm`,
+  ramping over ~100 units). Fed by `RenderFrame.royale` (game.ts fills it from the BR
+  words outside the lobby and intermission).
+- **Models** (`palmodel.ts`, `models.ts`): three.js primitives merged per part, each
+  face a palette index lit through COLORMAP like walls (sector light + distance, a
+  ±3-row key light, dynamic lights; fullbright faces feed the bloom; green-ramp faces
+  take the player translation). Buggy: tub, roll cage, fenders, lamps (+ a headlight
+  dynamic light), four wheels spinning with the drawn speed, front wheels steering from
+  the turn rate. A player body within 6 units of a buggy is drawn seated in it (body
+  hook `RenderMobj.pose` = 1: upright, not walking). Dropship: ~680 × 940, four engines
+  with glowing exhausts, heading from its motion, drawn 60 below its z. Parachuter: the
+  slot's 3D marine (pose 2 = face-down freefall, 3 = hanging), frame B adds a 9-cell
+  canopy in the slot colour that blossoms open; our own parachuter (the view mobj)
+  shows only the canopy, 64 units ahead so looking up shows it. In the ship the client
+  uses a chase camera 1250 back along the view, 300 up and tilted down 0.3 rad.
+- **Supply crate** (MF_SUPPLY): the crate box painted red with a white band and a
+  strobe on top, a red smoke column (instanced puffs) and a pulsing red light.
+- **Sprites** (`sprites.ts`): SNPR/SNPG A–D/SNPF/GREN are rasterised in software from a
+  low-poly rifle and grenade (perspective for the psprite, aimed at the crosshair;
+  orthographic 3/4 for the pickups), quantised to the WAD's palette and injected into
+  the sprite namespace before the atlas is built (a WAD with its own lumps keeps them).
+- **From altitude**: the sky is written at the far plane (whatever flies above the sky
+  ceiling draws over it); a sky dome (same sky mapping, horizon haze below) is drawn
+  while the camera is above its sector's ceiling, ceilings are then drawn double-sided
+  (roofs seen from above) and the near plane moves out; Doom's view depth also counts
+  vertical distance beyond 256 so the town below is distance-lit; far plane 65536.
+
+## Mods: one file per mod (requested 2026-10-03)
+
+The user: "all this should be contained within a single map file", "we want to
+encourage others to submit their mod like this and host room", "there needs to be
+documentation page on how to build mod with examples".
+
+- **A mod is one PWAD file** `public/mods/<id>.wad` holding: exactly one map (marker +
+  THINGS LINEDEFS SIDEDEFS VERTEXES SECTORS, optional SEGS/SSECTORS/NODES/BLOCKMAP/
+  REJECT — nodes are required, any node builder will do), the art it needs beyond the base pak (TEXTURE1/PNAMES with patches
+  between P_START/P_END, flats between F_START/F_END), and a **`MODINFO`** lump (UTF-8
+  JSON). Battle royale's BR01 is the first mod (`public/mods/br01.wad`); the built-in
+  `br` rooms play it.
+- **MODINFO** (format 1):
+  ```json
+  { "format": 1, "id": "br01", "title": "Doom Town Royale", "author": "Doom Town",
+    "license": "BSD-3-Clause", "description": "64 marines, one island, one survivor.",
+    "mode": "battle-royale", "map": "BR01", "slots": 64,
+    "ghosts": false, "bosses": false,
+    "rules": { "matchSeconds": 900, "lobbySeconds": 45, "dropAltitude": 4096,
+               "startBullets": 20, "vehicles": true, "supplyDrops": true,
+               "zone": [ { "wait": 60, "shrink": 60, "radius": 60, "dps": 1 }, ... ],
+               "loot": { "sniper": 5, "bfg": 0.5, ... } } }
+  ```
+  `mode` is one of `deathmatch`, `team-deathmatch`, `elimination`, `war`,
+  `battle-royale`. `id` is `[a-z0-9]{2,16}`. Every rule is optional (the mode's default).
+- **Rules to the sim**: the client turns `rules` into numbers and appends a rules block
+  to `world_new_cfg` after the flags word: `[count, (key, value) × count]`, keys:
+  1 match_tics, 2 lobby_tics, 3 drop_alt (units), 4 start_bullets, 5 vehicles (0/1),
+  6 supply_drops (0/1), 7 zone stage count, 8.. per stage i (0-based): 8+4i wait tics,
+  9+4i shrink tics, 10+4i radius ‰ of stage-0, 11+4i dps — stages ≤ 8 (keys 8..39);
+  64.. loot weights in half-percent units, key 64 + loot row index (row order in DESIGN
+  "As implemented" loot list); 100 round_tics, 101 freeze_tics, 102 rounds_to_win,
+  103 tickets, 104 friendly fire (0/1). Unknown keys are ignored; the same file gives
+  the same numbers on every client, so lockstep holds.
+- **Rooms**: a room name with the word `mod` followed by the mod id plays that mod
+  (`na-mod-br01-1`, `my-mod-arena-night`); the mod's mode and slots apply. The list of
+  installed mods is `public/mods/index.json` (`[{ id, title, author, mode, map, slots,
+  bytes, description }]`), built by `npm run mods`, imported into the client at build
+  time (so `roomGame(name)` stays synchronous); the WAD itself is fetched when a room
+  using it is joined, and the sim gets its map lumps via `map_load` (extra lumps are
+  ignored).
+- **Hosting**: the menu's Host / Create room lets the player pick a mode *or* a mod and
+  names the room; the server list shows a mod room's title and "MOD" badge with its
+  author.
+- **Playtesting your own file**: `?offline=1&mod=<url or path>` loads a local/dev WAD,
+  and the menu has "Test a mod file…" (offline only) taking a file from disk — nobody
+  else can join a room built from a file only you have.
+- **Submitting**: mods enter through a pull request adding `mods/<id>/` (the source:
+  map script or editor files, MODINFO.json, README with credits/licence) and the built
+  `public/mods/<id>.wad`; `npm run mod:check public/mods/<id>.wad` validates it (lumps,
+  MODINFO schema, id uniqueness, size ≤ 4 MB, known thing types, textures resolvable
+  against Freedoom + the mod's own art, licence GPL-2.0-compatible or BSD/CC0/CC-BY;
+  the sim loads it and runs 60 s with bots). Once merged and deployed it appears in the
+  server list's host picker.
+- **Docs**: `docs/MODDING.md` (repo) and the same guide at `/modding.html` in the site
+  (linked from the menu footer "Make a mod"), with examples under `mods/examples/`:
+  a tiny deathmatch arena built with the map DSL (`mods/examples/arena`), a war map with
+  three capture points (`mods/examples/hill3`), and a battle-royale rules remix that
+  reuses BR01's map with a fast storm and snipers-only loot (`mods/examples/snipers`).
+  Each example builds with `npm run mods` and passes `mod:check`.
+
+As implemented (check and docs):
+
+- `tools/mods/check.mjs` (`npm run mod:check <file…>`, `-- --all` for every
+  `public/mods/*.wad`; `--seconds=N`, `--no-sim`, `--verbose`, `--wasm=<file>`): errors
+  fail, warnings don't. Allowed licences (SPDX): CC0-1.0, CC-BY-4.0, CC-BY-3.0,
+  BSD-3-Clause, BSD-2-Clause, MIT, GPL-2.0-only, GPL-2.0-or-later. Lumps outside the map
+  and the P_/F_ namespaces may only be MODINFO, PNAMES, TEXTURE1/2; a lump the base pak
+  has (PLAYPAL, DS*, …) is refused. Unknown MODINFO fields and rule keys are errors
+  (typos); rules of another mode are warnings; all six health/armor loot rows at 0 is an
+  error. A map name another installed mod uses is fine only with byte-identical map
+  lumps (a rules remix such as `snipers`). Things: Doom's (`src/wad/things.ts`), starts
+  1-4/11, 9000-9051; monsters and keys warn; decorations whose sprites the base pak lacks
+  warn; per mode: ≥ 4 DM starts (DM/TDM/elim), team starts + 1-8 points (war). The sim
+  run uses the mod's rules (battle royale: lobby capped at 10 s so the drop and play are
+  covered), reports ms/tic, kills/captures/crates/storm events/sniper pickups, bots that
+  moved > 512 units, and that a world deserialized at half time ends with the same hash.
+- `/modding.html` is `docs/MODDING.md` rendered into `modding.html` by a Vite plugin
+  (`vite.config.js`, renderer `tools/mods/markdown.mjs`, no dependencies; styles
+  `src/menu/modding.css`); it is a second build input next to `index.html`.
+
 ## Determinism
 
 The sim is Rust compiled to one wasm binary every client runs, using Doom's 16.16

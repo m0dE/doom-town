@@ -15,7 +15,7 @@ const base = (): string => (import.meta.env?.BASE_URL ?? './');
 let wadP: Promise<Wad> | null = null;
 let baseBytes: Uint8Array | null = null;
 let moduleP: Promise<WebAssembly.Module> | null = null;
-const sims = new Map<RotationKey, Promise<DoomSim>>();
+const sims = new Map<string, Promise<DoomSim>>();
 const arts = new Map<string, Promise<Uint8Array | null>>();
 const listeners = new Set<(label: string, frac: number) => void>();
 const progress = { wad: 0, sim: 0 };
@@ -99,18 +99,26 @@ export function loadWad(): Promise<Wad> {
  * them alike). The module is compiled once; each rotation gets its own instance.
  */
 export function loadSim(rotation: RotationKey = 'deathmatch', onMap?: (i: number, n: number) => void): Promise<DoomSim> {
-  let p = sims.get(rotation);
+  return loadSimMaps(rotation, ROTATIONS[rotation], onMap);
+}
+
+/**
+ * The sim with these maps loaded, cached under `key` (a rotation key, or `mod:<id>`).
+ * `lumps` gives a map's lumps directly (a mod's file) instead of maps/<MAP>.map.wad.
+ */
+export function loadSimMaps(key: string, names: readonly string[], onMap?: (i: number, n: number) => void, lumps?: (name: string) => Uint8Array | null): Promise<DoomSim> {
+  let p = sims.get(key);
   if (!p) {
     p = (async () => {
       moduleP ??= compileSim(fetch(`${base()}doomsim.wasm`)).catch((err) => { moduleP = null; throw err; });
-      const [module, wad, paks] = await Promise.all([moduleP, loadWad(), Promise.all(ROTATIONS[rotation].map(fetchMapLumps))]);
+      const [module, wad, paks] = await Promise.all([moduleP, loadWad(), Promise.all(names.map((n) => lumps?.(n) ?? fetchMapLumps(n)))]);
       // Each map's lumps come in its own pak; a full IWAD (the dev fallback) has them all.
-      const maps = ROTATIONS[rotation].map((name, i) => ({ name, pwad: mapPwad(paks[i] ? new Wad(paks[i]!) : wad, name) }));
+      const maps = names.map((name, i) => ({ name, pwad: mapPwad(paks[i] ? new Wad(paks[i]!) : wad, name) }));
       const sim = await DoomSim.create(module, maps, onMap);
       progress.sim = 1; report();
       return sim;
-    })().catch((err) => { sims.delete(rotation); throw err; });
-    sims.set(rotation, p);
+    })().catch((err) => { sims.delete(key); throw err; });
+    sims.set(key, p);
   }
   return p;
 }
@@ -136,6 +144,29 @@ export function fetchMapLumps(map: string): Promise<Uint8Array | null> {
 }
 const lumpPaks = new Map<string, Promise<Uint8Array | null>>();
 
+// ------------------------------------------------------------------ mods
+
+/**
+ * Mod files given by the page (a file from disk, ?mod=<url>), by mod id. Everything of a
+ * mod is keyed by its id, never by its map's name: two mods may play the same map lump
+ * (snipers remixes BR01) with different lumps or art.
+ */
+const localMods = new Map<string, Uint8Array>();
+export function setLocalMod(id: string, bytes: Uint8Array): void { localMods.set(id, bytes); }
+
+/** A mod's file (public/mods/<id>.wad, or one the page was given), fetched once; null when there is none. */
+export function fetchModWad(id: string): Promise<Uint8Array | null> {
+  const local = localMods.get(id);
+  if (local) return Promise.resolve(local);
+  let p = modPaks.get(id);
+  if (!p) {
+    p = fetch(`${base()}mods/${id}.wad`).then(async (r) => (r.ok ? new Uint8Array(await r.arrayBuffer()) : null)).catch(() => null);
+    modPaks.set(id, p);
+  }
+  return p;
+}
+const modPaks = new Map<string, Promise<Uint8Array | null>>();
+
 /** The Cyberdemon's and the Spider Mastermind's sprites: boss rooms only. */
 let bossP: Promise<Uint8Array | null> | null = null;
 export function fetchBossArt(): Promise<Uint8Array | null> {
@@ -147,9 +178,13 @@ export function fetchBossArt(): Promise<Uint8Array | null> {
  * The game data for showing one map: the base, that map's lumps and art, and the
  * bosses' sprites when the room has bosses (a fresh Wad: the renderer's per-map assets).
  */
-export async function mapWad(map: string, bosses = false): Promise<Wad> {
+export async function mapWad(map: string, bosses = false, modId?: string): Promise<Wad> {
   const base0 = await loadWad();
-  const [lumps, art, boss] = await Promise.all([fetchMapLumps(map), fetchMapArt(map), bosses ? fetchBossArt() : Promise.resolve(null)]);
+  // a mod's one file holds the map's lumps and its art
+  const modBytes = modId ? await fetchModWad(modId) : null;
+  const [lumps, art, boss] = await Promise.all([
+    modBytes ? Promise.resolve(modBytes) : fetchMapLumps(map), modBytes ? Promise.resolve(null) : fetchMapArt(map),
+    bosses ? fetchBossArt() : Promise.resolve(null)]);
   if (!baseBytes) return base0;
   const w = new Wad(baseBytes);
   for (const extra of [lumps, art, boss]) if (extra && extra.length > 12) w.add(extra);

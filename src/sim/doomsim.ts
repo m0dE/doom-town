@@ -16,7 +16,7 @@
 import type { lockstep } from 'arrr-network';
 import {
   instantiateSim, copyCounted, copyI32, readNames,
-  type DoomSimExports, BOSS_WORDS, EVENT_WORDS, MOBJ_WORDS, PLAYER_WORDS, POINT_WORDS, PV, ROW_WORDS,
+  type DoomSimExports, BOSS_WORDS, BR_WORDS, EVENT_WORDS, MOBJ_WORDS, PLAYER_WORDS, POINT_WORDS, PV, ROW_WORDS,
 } from './abi.js';
 import { SLOTS, TICRATE } from './map.js';
 
@@ -44,6 +44,12 @@ const SRC = Symbol('doomsim.src');
 interface Source { sim: DoomSim; h: number; tic: number; hash: number; bytes: Uint8Array }
 
 const EMPTY = new Int32Array(0);
+/** Battle royale words after the boss words in world_view_match: 11 in sim_version 8, 19 from 9 (DESIGN.md "Battle royale v2"). */
+/** ticcmd button bits the sim reads (0..10). */
+const BUTTON_MASK = 0x7ff;
+const brWords = (version: number): number => (version >= 9 ? BR_WORDS : version >= 8 ? 11 : 0);
+/** PlayerView words: 51, 57 from sim_version 9 (air state, virtual position, vehicle, grenades). */
+const playerWords = (version: number): number => (version >= 9 ? PLAYER_WORDS : 51);
 
 /**
  * One instantiated module with the maps of one rotation loaded, in rotation order
@@ -163,12 +169,15 @@ export class DoomSim {
   /** count × 12 words (MobjView). */
   mobjs(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_mobjs(h), MOBJ_WORDS); }
   /** One PlayerView (PLAYER_WORDS = 51 words in v2). */
-  player(h: number, slot: number): Int32Array { return copyI32(this.ex, this.ex.world_view_player(h, slot), PLAYER_WORDS); }
-  /** world_view_match: 13 words, POINT_WORDS per capture point, BOSS_WORDS boss words. */
+  player(h: number, slot: number): Int32Array { return copyI32(this.ex, this.ex.world_view_player(h, slot), playerWords(this.version)); }
+  /**
+   * world_view_match: 13 words, POINT_WORDS per capture point, BOSS_WORDS boss words,
+   * then the battle royale words (src/game/br.ts readZone).
+   */
   match(h: number): Int32Array {
     const ptr = this.ex.world_view_match(h);
     const n = new Int32Array(this.ex.memory.buffer, ptr, 13)[12];
-    return copyI32(this.ex, ptr, 13 + Math.max(0, n) * POINT_WORDS + BOSS_WORDS);
+    return copyI32(this.ex, ptr, 13 + Math.max(0, n) * POINT_WORDS + BOSS_WORDS + brWords(this.version));
   }
   /** count(=slots) × 9 words (PlayerRow). */
   players(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_players(h), ROW_WORDS); }
@@ -202,15 +211,17 @@ export function decodeCmd(data: unknown): Cmd | null {
   const pitch = clampInt(c[1], -32768, 32767);
   const forward = clampInt(c[2], -50, 50);
   const side = clampInt(c[3], -40, 40);
-  let buttons = clampInt(c[4], 0, 0x3ff);
+  // bits 0..10 (bit 10 = grenade, sim_version 9), as the sim's set_cmd masks them
+  let buttons = clampInt(c[4], 0, 0x7fffffff);
   if (angle === null || pitch === null || forward === null || side === null || buttons === null) return null;
+  buttons &= BUTTON_MASK;
   // Weapon select is 0..9 in bits 4..7; 10..15 means nothing.
   if (((buttons >> 4) & 15) > 9) buttons &= ~0xf0;
   return { angle, pitch, forward, side, buttons };
 }
 
 export function encodeCmd(c: Cmd): { c: [number, number, number, number, number] } {
-  return { c: [c.angle & 0xffff, c.pitch | 0, c.forward | 0, c.side | 0, c.buttons & 0x3ff] };
+  return { c: [c.angle & 0xffff, c.pitch | 0, c.forward | 0, c.side | 0, c.buttons & BUTTON_MASK] };
 }
 
 // ---------------------------------------------------------------------- base64

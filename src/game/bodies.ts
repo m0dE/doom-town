@@ -167,6 +167,12 @@ export class ModelBodies implements PlayerBodyRenderer {
 
       const h = b.holder;
       h.position.set(m.x, m.y, m.z);
+      // battle royale poses (the renderer sets m.pose): skydiving face down, spread out
+      // around his middle; under a canopy or seated in a buggy, upright and not walking
+      const pose = m.pose ?? 0;
+      b.model.object.rotation.z = pose === 2 ? -1.35 : 0;
+      if (pose === 2) h.position.z += 24;
+      if (pose) { b.speed = 0; b.vx = 0; b.vy = 0; }
       // dead is dead: the sim still turns a dead player toward his killer (and a human's
       // mouse turns him), but the body keeps the facing it died with
       const dead = (m.frame & FF_FRAMEMASK) >= 7;
@@ -205,7 +211,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       model.pose({
         frame,
         moveSpeed: b.speed,
-        airborne: m.z > floor + AIRBORNE,
+        airborne: pose === 2 || pose === 3 || (!pose && m.z > floor + AIRBORNE),
         time: ctx.time,
         kick,
         floor: floor - m.z,

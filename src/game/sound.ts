@@ -17,6 +17,8 @@ export interface SoundOut {
   /** Once per frame: the listener, and where every drawn mobj is. */
   frame(x: number, y: number, angle: number, mobjs: ArrayLike<RenderMobj>, count: number): void;
   setVolume(v: number): void;
+  /** Battle royale: the storm's roar, 0 (silent) .. 1 (deep in it). */
+  setStorm?(level: number): void;
   dispose(): void;
 }
 
@@ -60,7 +62,63 @@ export class GameSound implements SoundOut {
     bank.update();
   }
 
-  setVolume(v: number): void { this.bank?.setVolume(v); }
+  setVolume(v: number): void { this.bank?.setVolume(v); this.volume = v; if (this.storm) this.storm.out.gain.value = this.stormLevel * 0.35 * v; }
 
-  dispose(): void { try { this.bank?.dispose(); } catch { /* closed */ } }
+  private volume = 1;
+  private stormLevel = 0;
+  private storm: { src: AudioBufferSourceNode; out: GainNode } | null = null;
+
+  /**
+   * The storm loop (DESIGN.md "Storm"): generated, not a WAD sound - two seconds of
+   * brown noise through a swept low-pass, looped, faded with `level`.
+   */
+  setStorm(level: number): void {
+    const bank = this.bank;
+    if (!bank) return;
+    level = Math.max(0, Math.min(1, level));
+    if (Math.abs(level - this.stormLevel) < 0.01 && (level > 0) === !!this.storm) return;
+    this.stormLevel = level;
+    const ctx = bank.ctx;
+    if (!this.storm && level > 0) {
+      if (ctx.state !== 'running') return;
+      const n = ctx.sampleRate * 2;
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < n; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+      // fade the seam
+      for (let i = 0; i < 2000; i++) { const k = i / 2000; d[i] *= k; d[n - 1 - i] *= k; }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 500;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.23;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 260;
+      lfo.connect(lfoGain).connect(lp.frequency);
+      const out = ctx.createGain();
+      out.gain.value = 0;
+      src.connect(lp).connect(out).connect(ctx.destination);
+      src.start();
+      lfo.start();
+      src.onended = () => { try { lfo.stop(); } catch { /* stopped */ } };
+      this.storm = { src, out };
+    }
+    if (this.storm) {
+      this.storm.out.gain.setTargetAtTime(level * 0.35 * this.volume, ctx.currentTime, 0.25);
+      if (level === 0) {
+        const st = this.storm;
+        this.storm = null;
+        setTimeout(() => { try { st.src.stop(); } catch { /* stopped */ } }, 1500);
+      }
+    }
+  }
+
+  dispose(): void {
+    try { this.storm?.src.stop(); } catch { /* stopped */ }
+    try { this.bank?.dispose(); } catch { /* closed */ }
+  }
 }

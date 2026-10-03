@@ -11,7 +11,9 @@
     "build:sim": "node tools/build-sim.mjs",
     "fetch": "node tools/fetch-freedoom.mjs",
     "pak": "node tools/build-pak.mjs",
-    "export": "node tools/export.mjs"
+    "export": "node tools/export.mjs",
+    "mods": "node tools/mods/pack.mjs",
+    "mod:check": "node tools/mods/check.mjs"
   },
   "dependencies": {
     "arrr-network": "file:vendor/arrr-network-2.3.0.tgz",

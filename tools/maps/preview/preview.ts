@@ -1,4 +1,5 @@
-// Map preview (tools only): loads the base pak and public/maps/<MAP>.wad merged over it
+// Map preview (tools only): loads the base pak and public/maps/<MAP>.wad (or a mod,
+// ?mod=<id>: public/mods/<id>.wad) merged over it
 // (the delivery layout of DESIGN.md "Map data delivery"), shows the map's things as static
 // sprites, and renders from a camera given in the URL:
 //   ?map=WAR01&x=&y=&z=&yaw=&pitch=  (degrees; z defaults to floor + 41)
@@ -13,9 +14,13 @@ const hud = document.getElementById('hud')!;
 if (params.get('ui') === '0') hud.style.display = 'none';
 
 const get = async (u: string) => new Uint8Array(await (await fetch(u)).arrayBuffer());
-const [baseBytes, pakBytes] = await Promise.all([get('./freedm-lite.wad'), get(`./maps/${MAP}.wad`)]);
+// a mod (?mod=br01: public/mods/br01.wad holds the map and its art) or a rotation map
+// (art in public/maps/<MAP>.wad, lumps in public/maps/<MAP>.map.wad)
+const MOD = params.get('mod');
+const paks = MOD ? [`./mods/${MOD}.wad`] : [`./maps/${MAP}.wad`, `./maps/${MAP}.map.wad`];
+const [baseBytes, ...pakBytes] = await Promise.all([get('./freedm-lite.wad'), ...paks.map(get)]);
 const wad: Wad = loadWad(baseBytes);
-wad.add(pakBytes);
+for (const b of pakBytes) wad.add(b);
 const renderer = new Renderer(canvas, wad, MAP);
 const map = renderer.map;
 const floorAt = (x: number, y: number) => map.sectors[renderer.sectorAt(x, y)].floor;

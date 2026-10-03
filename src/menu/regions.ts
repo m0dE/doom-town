@@ -45,13 +45,14 @@ export const REGIONS: readonly Region[] = [
 /**
  * The standing rooms of every other game, per region: the room kind is the words a
  * regional room name carries between region and number (src/menu/modes.ts), e.g.
- * `na-tdm-1`, `eu-war-1`, `na-boss-1` (Deathmatch with random bosses).
+ * `na-tdm-1`, `eu-war-1`, `na-br-1`, `na-boss-1` (Deathmatch with random bosses).
  */
 export const STANDING: Record<string, Partial<Record<RegionId, number>>> = {
   '': { na: 2, eu: 1, asia: 1 },
   tdm: { na: 1, eu: 1, asia: 1 },
   elim: { na: 1, eu: 1 },
   war: { na: 1, eu: 1 },
+  br: { na: 1, eu: 1 },
   boss: { na: 1, eu: 1 },
   'tdm-boss': { na: 1 },
 };

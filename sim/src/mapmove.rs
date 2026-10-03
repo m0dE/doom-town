@@ -172,6 +172,10 @@ impl World {
         if t == tm {
             return true;
         }
+        // grenades bounce off walls and floors only
+        if mtype as usize == mt::GRENADE {
+            return true;
+        }
         if mflags & MF_SKULLFLY != 0 {
             let damage = ((self.p_random() % 8) + 1) * info(mtype as usize).damage;
             self.damage_mobj(t, tm, tm, damage, mod_::WORLD);

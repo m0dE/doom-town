@@ -361,6 +361,18 @@ impl World {
 
     /// P_MobjThinker
     pub fn mobj_thinker(&mut self, h: u32) {
+        {
+            let m = self.mo(h);
+            if m.type_ as usize == mt::GRENADE && m.state as usize == st::GRENADE {
+                self.grenade_think(h);
+                return;
+            }
+            // the dropship and parachuters are placed directly each tic (drop.rs); no
+            // momentum, no floor/ceiling clamping, their states never advance
+            if m.type_ as usize == mt::PARACHUTER || m.type_ as usize == mt::DROPSHIP {
+                return;
+            }
+        }
         let (momx, momy, flags) = {
             let m = self.mo(h);
             (m.momx, m.momy, m.flags)
@@ -460,7 +472,8 @@ impl World {
             let m = self.mo(h);
             (m.flags, m.type_ as usize, m.spawnpoint)
         };
-        if flags & MF_SPECIAL != 0 && flags & MF_DROPPED == 0 && type_ != mt::INV && type_ != mt::INS {
+        // battle royale: nothing respawns
+        if flags & MF_SPECIAL != 0 && flags & MF_DROPPED == 0 && type_ != mt::INV && type_ != mt::INS && !self.is_br() {
             let lt = self.leveltime;
             self.item_queue.push_back((spawnpoint, lt));
         }
@@ -502,8 +515,8 @@ impl World {
         if mthing.type_ == 11 || (mthing.type_ >= 1 && mthing.type_ <= 4) {
             return; // starts are collected in Map::spawn_spots
         }
-        let bit = 4; // ultra-violence
-        if mthing.options & bit == 0 {
+        let bit = 4; // ultra-violence (crates, thing 9020, regardless of skill bits)
+        if mthing.options & bit == 0 && mthing.type_ != 9020 {
             return;
         }
         let i = match (0..NUMMOBJTYPES).find(|&i| info(i).doomednum == mthing.type_ as i32) {
@@ -512,6 +525,9 @@ impl World {
         };
         let fl = info(i).flags as u32;
         if fl & MF_NOTDMATCH != 0 {
+            return;
+        }
+        if i == mt::BUGGY && !self.g.cfg.br.vehicles {
             return;
         }
         // no monsters

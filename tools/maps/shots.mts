@@ -2,6 +2,7 @@
 // cached Chromium and SwiftShader. Build the preview first:
 //   npx vite build -c tools/maps/preview/vite.config.js
 //   node tools/maps/shots.mts WAR01 out-dir name[.jpg]:x,y,z|-,yaw,pitch ...
+//   node tools/maps/shots.mts BR01@br01 ...   (a mod's map, from public/mods/br01.wad)
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +20,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.on('pageerror', (e) => console.error('pageerror', e.message));
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.error('console', m.text()); });
-  await page.goto(`http://localhost:5194/index.html?map=${map}&ui=0`);
+  // MAP or MAP@modid (the map comes from public/mods/<modid>.wad)
+  const [mapName, modId] = map.split('@');
+  await page.goto(`http://localhost:5194/index.html?map=${mapName}&ui=0${modId ? `&mod=${modId}` : ''}`);
   await page.waitForFunction(() => (window as unknown as { __preview?: { ready: boolean } }).__preview?.ready, null, { timeout: 120000 });
   for (const s of specs) {
     const [name, rest] = s.split(':');

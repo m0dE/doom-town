@@ -107,6 +107,7 @@ impl World {
                 }
             }
             Action::BFGsound => self.start_sound(h, sfx::bfg),
+            Action::FireSniper => self.a_fire_sniper(slot, h),
             Action::FireBFG => {
                 let w = self.players[slot].readyweapon as usize;
                 self.players[slot].ammo[WEAPONINFO[w].ammo as usize] -= BFGCELLS;
@@ -136,13 +137,7 @@ impl World {
     pub fn check_ammo(&mut self, slot: usize) -> bool {
         let p = &mut self.players[slot];
         let ammo = WEAPONINFO[p.readyweapon as usize].ammo;
-        let count = if p.readyweapon == WP_BFG {
-            BFGCELLS
-        } else if p.readyweapon == WP_SUPERSHOTGUN {
-            2
-        } else {
-            1
-        };
+        let count = ammo_per_shot(p.readyweapon);
         if ammo == AM_NOAMMO || p.ammo[ammo as usize] >= count {
             return true;
         }
@@ -338,7 +333,12 @@ impl World {
 
     /// P_GunShot
     fn gun_shot(&mut self, h: u32, accurate: bool, slope: Fixed, mod_: i32) {
-        let damage = 5 * (self.p_random() % 3 + 1);
+        self.gun_shot_x(h, accurate, slope, mod_, 1)
+    }
+
+    /// P_GunShot with a damage multiplier (battle royale's zoomed pistol)
+    fn gun_shot_x(&mut self, h: u32, accurate: bool, slope: Fixed, mod_: i32, mult: i32) {
+        let damage = 5 * (self.p_random() % 3 + 1) * mult;
         let mut angle = self.mo(h).angle;
         if !accurate {
             angle = angle.wrapping_add(((self.p_random() - self.p_random()) << 18) as u32);
@@ -353,10 +353,31 @@ impl World {
         self.players[slot].ammo[WEAPONINFO[w].ammo as usize] -= 1;
         self.set_psprite(slot, PS_FLASH, WEAPONINFO[w].flashstate);
         let slope = self.bullet_slope(slot);
-        let acc = self.players[slot].refire == 0;
+        // battle royale zoom: no spread, x3 damage (a marksman shot)
+        let zoom = self.zoomed(slot);
+        let acc = self.players[slot].refire == 0 || zoom;
         if self.alive(h) {
-            self.gun_shot(h, acc, slope, mod_::PISTOL);
+            self.gun_shot_x(h, acc, slope, mod_::PISTOL, if zoom { 3 } else { 1 });
         }
+    }
+
+    /// the sniper rifle: one hitscan of 70 + P_Random%31, no spread when zoomed, the
+    /// shotgun's spread when not; 5 bullets a shot
+    fn a_fire_sniper(&mut self, slot: usize, h: u32) {
+        self.start_sound(h, sfx::dshtgn);
+        self.set_mobj_state(h, st::PLAY_ATK2 as i32);
+        self.players[slot].ammo[AM_CLIP as usize] -= SNIPER_AMMO;
+        self.set_psprite(slot, PS_FLASH, WEAPONINFO[WP_SNIPER as usize].flashstate);
+        if !self.alive(h) {
+            return;
+        }
+        let slope = self.bullet_slope(slot);
+        let damage = 70 + self.p_random() % 31;
+        let mut angle = self.mo(h).angle;
+        if !self.zoomed(slot) {
+            angle = angle.wrapping_add(((self.p_random() - self.p_random()) << 18) as u32);
+        }
+        self.line_attack(h, angle, MISSILERANGE * 2, slope, damage, mod_::SNIPER);
     }
 
     fn a_fire_shotgun(&mut self, slot: usize, h: u32) {
@@ -405,7 +426,7 @@ impl World {
         let off = self.players[slot].psprites[pos].state - st::CHAIN1 as i32;
         self.set_psprite(slot, PS_FLASH, WEAPONINFO[w].flashstate + off);
         let slope = self.bullet_slope(slot);
-        let acc = self.players[slot].refire == 0;
+        let acc = self.players[slot].refire == 0 || self.zoomed(slot);
         if self.alive(h) {
             self.gun_shot(h, acc, slope, mod_::CHAINGUN);
         }

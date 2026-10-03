@@ -98,7 +98,8 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: u32) {
 pub unsafe extern "C" fn map_load(ptr: *const u8, len: u32) -> i32 {
     let bytes = std::slice::from_raw_parts(ptr, len as usize);
     match Map::load(bytes) {
-        Ok(m) => with(|s| {
+        Ok(mut m) => with(|s| {
+            m.id = s.maps.len() as i32;
             let tex = names_blob(m.texture_names.iter().map(|x| x.as_str()));
             let flats = names_blob(m.flat_names.iter().map(|x| x.as_str()));
             s.maps.push(Rc::new(m));
@@ -204,18 +205,103 @@ pub extern "C" fn world_buf_ptr() -> *const u8 {
 
 /// # Safety
 /// `ptr` must point to `len` readable bytes.
+/// The snapshot names its maps (name + content hash); they must have been map_load'ed.
 #[no_mangle]
-pub unsafe extern "C" fn world_deserialize(map_id: i32, ptr: *const u8, len: u32) -> u32 {
+pub unsafe extern "C" fn world_deserialize(ptr: *const u8, len: u32) -> u32 {
     let bytes = std::slice::from_raw_parts(ptr, len as usize);
+    with(|s| match World::deserialize(&s.maps, bytes) {
+        Some(w) => add_world(s, w),
+        None => 0,
+    })
+}
+
+/// # Safety
+/// v1 signature kept for old callers: the map id is ignored.
+#[no_mangle]
+pub unsafe extern "C" fn world_deserialize_map(_map_id: i32, ptr: *const u8, len: u32) -> u32 {
+    world_deserialize(ptr, len)
+}
+
+/// # Safety
+/// `ptr` must point to `len` bytes of u32 config words (DESIGN.md "ABI additions (v2)"):
+/// [version=2, mode, slots, match_tics, intermission_tics, round_tics, freeze_tics,
+///  rounds_to_win, tickets, friendly_fire, map_count, map_id × map_count, (seed)]
+#[no_mangle]
+pub unsafe extern "C" fn world_new_cfg(ptr: *const u32, len: u32) -> u32 {
+    let n = (len / 4) as usize;
+    if n < 11 || (ptr as usize) % 4 != 0 {
+        return 0;
+    }
+    let w: Vec<u32> = std::slice::from_raw_parts(ptr, n).to_vec();
+    if w[0] != 2 {
+        return 0;
+    }
+    let count = w[10] as usize;
+    if count == 0 || n < 11 + count {
+        return 0;
+    }
+    let seed = if n > 11 + count { w[11 + count] } else { 0 };
+    let cfg = crate::game::Config {
+        mode: w[1],
+        slots: w[2],
+        match_tics: w[3],
+        inter_tics: w[4],
+        round_tics: w[5],
+        freeze_tics: w[6],
+        rounds_to_win: w[7],
+        tickets: w[8],
+        friendly_fire: w[9] != 0,
+    };
     with(|s| {
-        let map = match s.maps.get(map_id as usize) {
-            Some(m) => m.clone(),
-            None => return 0,
-        };
-        match World::deserialize(map, bytes) {
-            Some(w) => add_world(s, w),
-            None => 0,
+        let mut maps = Vec::new();
+        for &id in &w[11..11 + count] {
+            match s.maps.get(id as usize) {
+                Some(m) => maps.push(m.clone()),
+                None => return 0,
+            }
         }
+        let world = World::new_cfg(cfg, maps, seed);
+        add_world(s, world)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn world_view_match(h: u32) -> *const u8 {
+    with(|s| {
+        let sl = match world_mut(s, h) {
+            Some(sl) => sl,
+            None => return std::ptr::null(),
+        };
+        let w = &sl.world;
+        let g = &w.g;
+        let v = &mut sl.view;
+        v.clear();
+        let alive = w.alive_counts();
+        let next = &g.maps[w.next_map_index() as usize];
+        for x in [
+            g.cfg.mode as i32,
+            g.phase as i32,
+            g.phase_left as i32,
+            g.match_index as i32,
+            w.map.id,
+            next.id,
+            g.team_score[0],
+            g.team_score[1],
+            g.round,
+            alive[0],
+            alive[1],
+            g.winner,
+            g.points.len() as i32,
+        ] {
+            put_i32(v, x);
+        }
+        for (i, p) in g.points.iter().enumerate() {
+            let (x, y, r) = w.map.cap_points[i];
+            for q in [x, y, r, p.owner, p.progress * 100 / crate::game::CAP_FULL, p.flags] {
+                put_i32(v, q);
+            }
+        }
+        v.as_ptr()
     })
 }
 
@@ -340,7 +426,7 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
         let p = match w.players.get(slot as usize) {
             Some(p) => p,
             None => {
-                for _ in 0..48 {
+                for _ in 0..51 {
                     put_i32(v, 0);
                 }
                 return v.as_ptr();
@@ -367,7 +453,7 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
             },
             None => 0,
         };
-        let words: [i32; 48] = [
+        let words: [i32; 51] = [
             p.slot,
             id,
             p.playerstate as i32,
@@ -416,6 +502,9 @@ pub extern "C" fn world_view_player(h: u32, slot: u32) -> *const u8 {
             w.match_phase(),
             onground,
             p.refire,
+            w.team_of(slot as usize),
+            w.respawn_mask(slot as usize),
+            w.spectating(slot as usize),
         ];
         for x in words {
             put_i32(v, x);
@@ -437,7 +526,7 @@ pub extern "C" fn world_view_players(h: u32) -> *const u8 {
         put_i32(v, w.players.len() as i32);
         for p in &w.players {
             let id = w.deref(p.mo).map(|hh| w.mo(hh).id as i32).unwrap_or(0);
-            for x in [p.slot, p.control as i32, id, p.frags, p.deaths, p.health, p.playerstate as i32, p.color] {
+            for x in [p.slot, p.control as i32, id, p.frags, p.deaths, p.health, p.playerstate as i32, p.color, w.team_of(p.slot as usize)] {
                 put_i32(v, x);
             }
         }

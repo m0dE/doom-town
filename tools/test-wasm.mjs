@@ -113,7 +113,7 @@ check(np === SLOTS && nm > 100 && nsec > 0 && nlin > nsec, 'views')
 const len = ex.world_serialize(h)
 const bytes = mem().slice(ex.world_buf_ptr(), ex.world_buf_ptr() + len)
 const bp = pass(bytes)
-const h2 = ex.world_deserialize(mapId, bp, bytes.length)
+const h2 = ex.world_deserialize(bp, bytes.length)
 ex.dealloc(bp, bytes.length)
 check(h2 > 0, 'world_deserialize')
 const h3 = ex.world_clone(h)
@@ -125,8 +125,79 @@ for (let t = 0; t < 35 * 5; t++) {
 }
 // bad data must be rejected, not crash
 const junk = pass(bytes.slice(0, 100))
-check(ex.world_deserialize(mapId, junk, 100) === 0, 'reject truncated data')
+check(ex.world_deserialize(junk, 100) === 0, 'reject truncated data')
 console.log(`serialized ${len} bytes; hash ${(ex.world_hash(h) >>> 0).toString(16)}; copies in sync`)
 ex.world_free(h); ex.world_free(h2); ex.world_free(h3)
+
+// ---- v2: modes, rotation, world_view_match
+const wad = readFileSync(join(root, 'assets', 'freedm.wad'))
+const second = 'MAP01'
+const pw2 = mapPwad(wad, second)
+const p2 = pass(pw2)
+const map2 = ex.map_load(p2, pw2.length)
+ex.dealloc(p2, pw2.length)
+check(map2 > mapId, 'second map_load')
+const newCfg = (words) => {
+  const buf = new Uint32Array(words)
+  const p = ex.alloc(buf.byteLength)
+  new Uint32Array(ex.memory.buffer, p, words.length).set(buf)
+  const hh = ex.world_new_cfg(p, buf.byteLength)
+  ex.dealloc(p, buf.byteLength)
+  return hh
+}
+const matchView = (hh) => {
+  const p = ex.world_view_match(hh)
+  const head = i32(p, 13)
+  return { mode: head[0], phase: head[1], left: head[2], match: head[3], map: head[4], next: head[5], score: [head[6], head[7]], round: head[8], alive: [head[9], head[10]], winner: head[11], points: head[12] }
+}
+// TDM, 60 s matches, 3 s intermission, rotation [MAP19, MAP01]
+const ht = newCfg([2, 1, 64, 35 * 60, 35 * 3, 0, 0, 0, 0, 0, 2, mapId, map2, 99])
+check(ht > 0, 'world_new_cfg')
+let changes = 0
+for (let t = 0; t < 35 * 70; t++) {
+  ex.world_tick(ht)
+  const ep = ex.world_events(ht)
+  const n = new Uint32Array(ex.memory.buffer, ep, 1)[0]
+  const ev = i32(ep + 4, n * 8)
+  for (let k = 0; k < n; k++) if (ev[k * 8] === 9) { changes++; check(ev[k * 8 + 1] === map2, 'event 9 names the new map') }
+}
+const mv = matchView(ht)
+console.log('TDM after 70 s:', JSON.stringify(mv))
+check(changes === 1 && mv.map === map2 && mv.next === mapId && mv.mode === 1, 'rotation switched to the second map')
+const rows = ex.world_view_players(ht)
+const rowsN = new Uint32Array(ex.memory.buffer, rows, 1)[0]
+const r = i32(rows + 4, rowsN * 9)
+check(rowsN === 64 && r[8] === 0 && r[9 + 8] === 1, 'PlayerRow team word')
+// snapshot across the map switch: no map id needed
+const tl = ex.world_serialize(ht)
+const tb = mem().slice(ex.world_buf_ptr(), ex.world_buf_ptr() + tl)
+const tp = pass(tb)
+const ht2 = ex.world_deserialize(tp, tb.length)
+ex.dealloc(tp, tb.length)
+check(ht2 > 0 && ex.world_hash(ht2) === ex.world_hash(ht), 'TDM snapshot round-trip')
+for (let t = 0; t < 70; t++) { ex.world_tick(ht); ex.world_tick(ht2) }
+check(ex.world_hash(ht2) === ex.world_hash(ht), 'TDM copies in sync')
+ex.world_free(ht); ex.world_free(ht2)
+
+// War with 200 bots on MAP19 (or WAR01 if present): cost per tic in wasm
+let warMap = mapId, warName = 'MAP19'
+for (const f of ['public/maps-src/WAR01.wad', 'public/maps/WAR01.wad']) {
+  try {
+    const wb = readFileSync(join(root, f))
+    const wp2 = pass(wb)
+    const id = ex.map_load(wp2, wb.length)
+    ex.dealloc(wp2, wb.length)
+    if (id >= 0) { warMap = id; warName = f; break } else console.log(`${f}: map_load error ${id}`)
+  } catch {}
+}
+const hw = newCfg([2, 3, 200, 0, 0, 0, 0, 0, 0, 0, 1, warMap, 5])
+const tw = performance.now()
+const WT = 35 * 60
+for (let t = 0; t < WT; t++) ex.world_tick(hw)
+const wms = performance.now() - tw
+const wv = matchView(hw)
+console.log(`WAR 200 bots on ${warName}: ${(wms / WT).toFixed(3)} ms/tic over ${WT} tics; ${JSON.stringify(wv)}`)
+check(wv.points > 0, 'war has capture points')
+ex.world_free(hw)
 if (failures) { console.error(`${failures} failure(s)`); process.exit(1) }
 console.log('OK')

@@ -140,6 +140,16 @@ pub struct Map {
     pub spawn_spots: Vec<MapThing>,
     pub num_dm_starts: usize,
     pub nav: crate::bots::nav::Nav,
+    /// id in the loader's registry (set by the ABI / tests; -1 if unregistered)
+    pub id: i32,
+    /// per spawn spot: 0 red base, 1 blue base, 255 neither (war maps' mid-field spots)
+    pub spot_team: Vec<u8>,
+    /// the map has explicit team starts (things 9000/9001)
+    pub explicit_teams: bool,
+    /// capture points (x, y, radius), fixed: things 9010 or generated
+    pub cap_points: Vec<(Fixed, Fixed, Fixed)>,
+    /// per capture point: spawn spot indices to respawn at, nearest first
+    pub point_spots: Vec<Vec<u16>>,
 }
 
 pub fn fnv1a(bytes: &[u8], mut h: u32) -> u32 {
@@ -258,8 +268,9 @@ impl Map {
         // find the map marker: the lump right before THINGS
         let ti = lumps.iter().position(|l| l.name == "THINGS").ok_or(-3)?;
         let name = if ti > 0 { lumps[ti - 1].name.clone() } else { String::from("MAP") };
+        let end = (ti + 10).min(lumps.len());
         let find = |n: &str| -> Result<&[u8], i32> {
-            for l in &lumps[ti..] {
+            for l in &lumps[ti..end] {
                 if l.name == n {
                     return Ok(l.data);
                 }
@@ -275,7 +286,7 @@ impl Map {
         let nodes_l = find("NODES")?;
         let secs_l = find("SECTORS")?;
         let reject_l = find("REJECT").unwrap_or(&[]);
-        let bmap_l = find("BLOCKMAP")?;
+        let bmap_l = find("BLOCKMAP").unwrap_or(&[]);
 
         let mut hash = 2166136261u32;
         for l in [things_l, lines_l, sides_l, verts_l, segs_l, ss_l, nodes_l, secs_l, reject_l, bmap_l] {
@@ -486,35 +497,12 @@ impl Map {
                 MapThing { x: rd16(things_l, o), y: rd16(things_l, o + 2), angle: rd16(things_l, o + 4), type_: rd16(things_l, o + 6), options: rd16(things_l, o + 8) }
             })
             .collect();
-        // blockmap
-        if bmap_l.len() < 8 {
-            return Err(-7);
-        }
-        let blockmaplump: Vec<i16> = (0..bmap_l.len() / 2).map(|i| rd16(bmap_l, i * 2)).collect();
-        let bmaporgx = (blockmaplump[0] as i32) << FRACBITS;
-        let bmaporgy = (blockmaplump[1] as i32) << FRACBITS;
-        let bmapwidth = blockmaplump[2] as i32;
-        let bmapheight = blockmaplump[3] as i32;
-        if bmapwidth <= 0 || bmapheight <= 0 || 4 + (bmapwidth * bmapheight) as usize > blockmaplump.len() {
-            return Err(-7);
-        }
-        let mut blocklines = Vec::with_capacity((bmapwidth * bmapheight) as usize);
-        for b in 0..(bmapwidth * bmapheight) as usize {
-            let mut off = blockmaplump[4 + b] as u16 as usize;
-            let mut v = Vec::new();
-            while off < blockmaplump.len() {
-                let l = blockmaplump[off];
-                if l == -1 {
-                    break;
-                }
-                let li = l as u16 as usize;
-                if li < lines.len() {
-                    v.push(li as u32);
-                }
-                off += 1;
-            }
-            blocklines.push(v);
-        }
+        // blockmap: use the lump when it is present and sound, else build our own
+        let (bmaporgx, bmaporgy, bmapwidth, bmapheight, blocklines) = match parse_blockmap(bmap_l, &vertexes, lines.len()) {
+            Some(b) => b,
+            None => build_blockmap(&vertexes, &lines),
+        };
+        let blockmaplump: Vec<i16> = Vec::new();
         let numsectors = sectors.len();
         let mut reject = reject_l.to_vec();
         let need = (numsectors * numsectors).div_ceil(8);
@@ -591,10 +579,16 @@ impl Map {
             spawn_spots: Vec::new(),
             num_dm_starts: 0,
             nav: Default::default(),
+            id: -1,
+            spot_team: Vec::new(),
+            explicit_teams: false,
+            cap_points: Vec::new(),
+            point_spots: Vec::new(),
         };
         map.nav = crate::bots::nav::Nav::build(&map);
         map.spawn_spots = crate::spots::build_spawn_spots(&map);
         map.num_dm_starts = map.things.iter().filter(|t| t.type_ == 11).count();
+        crate::teams::build_teams(&mut map);
         Ok(map)
     }
 
@@ -665,6 +659,100 @@ impl Map {
         }
         v
     }
+}
+
+fn parse_blockmap(b: &[u8], vertexes: &[Vertex], nlines: usize) -> Option<(Fixed, Fixed, i32, i32, Vec<Vec<u32>>)> {
+    // offsets are u16 word indices: a lump past 128 KB has overflowed them
+    if b.len() < 8 || b.len() > 65536 * 2 {
+        return None;
+    }
+    let lump: Vec<i16> = (0..b.len() / 2).map(|i| rd16(b, i * 2)).collect();
+    let ox = lump[0] as i32;
+    let oy = lump[1] as i32;
+    let w = lump[2] as i32;
+    let h = lump[3] as i32;
+    if w <= 0 || h <= 0 || 4 + (w * h) as usize > lump.len() {
+        return None;
+    }
+    // it must cover every vertex
+    for v in vertexes {
+        let x = v.x >> FRACBITS;
+        let y = v.y >> FRACBITS;
+        if x < ox || y < oy || x >= ox + w * 128 || y >= oy + h * 128 {
+            return None;
+        }
+    }
+    let mut blocklines = Vec::with_capacity((w * h) as usize);
+    for blk in 0..(w * h) as usize {
+        let mut off = lump[4 + blk] as u16 as usize;
+        let mut v = Vec::new();
+        while off < lump.len() {
+            let l = lump[off];
+            if l == -1 {
+                break;
+            }
+            let li = l as u16 as usize;
+            if li < nlines {
+                v.push(li as u32);
+            }
+            off += 1;
+        }
+        if off >= lump.len() {
+            return None;
+        }
+        blocklines.push(v);
+    }
+    Some((ox << FRACBITS, oy << FRACBITS, w, h, blocklines))
+}
+
+/// Our own blockmap: every line goes into each 128-unit block its segment touches, in
+/// line order (vanilla's builders also add line 0 to every block; we do not).
+fn build_blockmap(vertexes: &[Vertex], lines: &[Line]) -> (Fixed, Fixed, i32, i32, Vec<Vec<u32>>) {
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for v in vertexes {
+        x0 = x0.min(v.x >> FRACBITS);
+        y0 = y0.min(v.y >> FRACBITS);
+        x1 = x1.max(v.x >> FRACBITS);
+        y1 = y1.max(v.y >> FRACBITS);
+    }
+    let ox = x0 - 8;
+    let oy = y0 - 8;
+    let w = ((x1 - ox) >> 7) + 1;
+    let h = ((y1 - oy) >> 7) + 1;
+    let mut blocks: Vec<Vec<u32>> = vec![Vec::new(); (w * h) as usize];
+    for (i, l) in lines.iter().enumerate() {
+        let (ax, ay) = ((l.v1.x >> FRACBITS) as i64, (l.v1.y >> FRACBITS) as i64);
+        let (bx, by) = ((l.v2.x >> FRACBITS) as i64, (l.v2.y >> FRACBITS) as i64);
+        let bx0 = ((ax.min(bx) - ox as i64) >> 7) as i32;
+        let bx1 = ((ax.max(bx) - ox as i64) >> 7) as i32;
+        let by0 = ((ay.min(by) - oy as i64) >> 7) as i32;
+        let by1 = ((ay.max(by) - oy as i64) >> 7) as i32;
+        let (dx, dy) = (bx - ax, by - ay);
+        for gy in by0.max(0)..=by1.min(h - 1) {
+            for gx in bx0.max(0)..=bx1.min(w - 1) {
+                // corners of the block (inclusive edges) on both sides of the line?
+                let cx0 = (ox + gx * 128) as i64;
+                let cy0 = (oy + gy * 128) as i64;
+                let mut pos = false;
+                let mut neg = false;
+                for (cx, cy) in [(cx0, cy0), (cx0 + 128, cy0), (cx0, cy0 + 128), (cx0 + 128, cy0 + 128)] {
+                    let c = (cx - ax) * dy - (cy - ay) * dx;
+                    if c > 0 {
+                        pos = true;
+                    } else if c < 0 {
+                        neg = true;
+                    } else {
+                        pos = true;
+                        neg = true;
+                    }
+                }
+                if pos && neg {
+                    blocks[(gy * w + gx) as usize].push(i as u32);
+                }
+            }
+        }
+    }
+    (ox << FRACBITS, oy << FRACBITS, w, h, blocks)
 }
 
 /// Build a PWAD holding one map's lumps (marker + the 10 map lumps) out of a bigger WAD.

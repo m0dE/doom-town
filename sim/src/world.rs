@@ -168,6 +168,10 @@ pub struct Player {
     // statistics (part of the state; used by tests and the scoreboard)
     pub items: i32,
     pub travelled: i64,
+    /// war: chosen respawn point (-1 base)
+    pub spawn_choice: i32,
+    /// elimination: which living player a dead one watches (cycled with attack)
+    pub spec_cycle: i32,
     pub bot: crate::bots::Bot,
 }
 
@@ -215,6 +219,8 @@ impl Player {
             color: slot & 3,
             items: 0,
             travelled: 0,
+            spawn_choice: -1,
+            spec_cycle: 0,
             bot: crate::bots::Bot::new(slot as u32),
         }
     }
@@ -315,6 +321,7 @@ pub struct Scratch {
     pub thingbuf: Vec<u32>,
     /// P_GiveWeapon under weapons-stay gave the weapon
     pub stay_gave: bool,
+    pub bins: crate::bots::Bins,
 }
 
 #[derive(Clone)]
@@ -346,31 +353,23 @@ pub struct World {
     pub bodyque: Vec<MRef>,
     pub bodyqueslot: u32,
     pub events: Vec<Event>,
+    pub g: crate::game::Game,
     pub sc: Scratch,
 }
 
 pub const SPEC_FLAG: u32 = 0x8000_0000;
 
 impl World {
+    /// deathmatch on one map (the v1 constructor)
     pub fn new(map: Rc<Map>, seed: u32, slots: usize) -> World {
-        let nblocks = (map.bmapwidth * map.bmapheight) as usize;
-        let sectors: Vec<Sector> = map
-            .sectors
-            .iter()
-            .map(|s| Sector {
-                floorheight: s.floorheight,
-                ceilingheight: s.ceilingheight,
-                floorpic: s.floorpic,
-                ceilingpic: s.ceilingpic,
-                lightlevel: s.lightlevel,
-                special: s.special,
-                specialdata: NONE,
-                thinglist: NONE,
-            })
-            .collect();
-        let line_special = map.lines.iter().map(|l| l.special).collect();
-        let side_tex = map.sides.iter().map(|s| [s.toptexture, s.midtexture, s.bottomtexture]).collect();
-        let nlines = map.lines.len();
+        World::new_cfg(crate::game::Config::ffa(slots as u32), vec![map], seed)
+    }
+
+    /// a world for a mode and a map rotation (maps must not be empty)
+    pub fn new_cfg(cfg: crate::game::Config, maps: Vec<Rc<Map>>, seed: u32) -> World {
+        let cfg = cfg.with_defaults();
+        let slots = cfg.slots as usize;
+        let map = maps[0].clone();
         let mut w = World {
             map: map.clone(),
             tic: 0,
@@ -385,10 +384,10 @@ impl World {
             dirty_order: false,
             pending_free_m: Vec::new(),
             pending_free_s: Vec::new(),
-            blocklinks: vec![NONE; nblocks],
-            sectors,
-            line_special,
-            side_tex,
+            blocklinks: Vec::new(),
+            sectors: Vec::new(),
+            line_special: Vec::new(),
+            side_tex: Vec::new(),
             buttons: Vec::new(),
             activeplats: Vec::new(),
             activeceilings: Vec::new(),
@@ -397,19 +396,72 @@ impl World {
             bodyque: Vec::new(),
             bodyqueslot: 0,
             events: Vec::new(),
-            sc: Scratch { line_valid: vec![0; nlines], ..Default::default() },
+            g: crate::game::Game::new(cfg, maps),
+            sc: Scratch::default(),
         };
+        let teams = w.g.cfg.teams();
         for (i, p) in w.players.iter_mut().enumerate() {
             p.bot = crate::bots::Bot::new(seed.wrapping_mul(2654435761).wrapping_add(i as u32 * 7919 + 1));
+            if teams {
+                // red / indigo-blue translations
+                p.color = if i & 1 == 0 { 3 } else { 1 };
+            }
         }
-        // P_LoadThings
+        w.load_map(map);
+        w.begin_match();
+        w
+    }
+
+    /// (re)build everything that depends on the map: mobjs, specials, sectors, lines
+    pub fn load_map(&mut self, map: Rc<Map>) {
+        let nblocks = (map.bmapwidth * map.bmapheight) as usize;
+        self.sectors = map
+            .sectors
+            .iter()
+            .map(|s| Sector {
+                floorheight: s.floorheight,
+                ceilingheight: s.ceilingheight,
+                floorpic: s.floorpic,
+                ceilingpic: s.ceilingpic,
+                lightlevel: s.lightlevel,
+                special: s.special,
+                specialdata: NONE,
+                thinglist: NONE,
+            })
+            .collect();
+        self.line_special = map.lines.iter().map(|l| l.special).collect();
+        self.side_tex = map.sides.iter().map(|s| [s.toptexture, s.midtexture, s.bottomtexture]).collect();
+        self.map = map.clone();
+        self.mobjs.clear();
+        self.mobj_free.clear();
+        self.sthinkers.clear();
+        self.sthinker_free.clear();
+        self.order.clear();
+        self.dirty_order = false;
+        self.pending_free_m.clear();
+        self.pending_free_s.clear();
+        self.blocklinks = vec![NONE; nblocks];
+        self.buttons.clear();
+        self.activeplats.clear();
+        self.activeceilings.clear();
+        self.item_queue.clear();
+        self.bodyque.clear();
+        self.bodyqueslot = 0;
+        self.sc = Scratch { line_valid: vec![0; map.lines.len()], ..Default::default() };
+        for p in self.players.iter_mut() {
+            p.mo = MRef::NULL;
+            p.attacker = MRef::NULL;
+            p.playerstate = PST_REBORN;
+            p.fresh = false;
+            p.bot.reset();
+            p.bot.goal_point = -1;
+        }
         let things = map.things.clone();
         for t in &things {
-            w.spawn_map_thing(t);
+            self.spawn_map_thing(t);
         }
-        w.spawn_specials();
-        w.compact();
-        w
+        self.spawn_specials();
+        self.compact();
     }
 
     // ------------------------------------------------------------------ mobj storage
@@ -519,45 +571,18 @@ impl World {
     }
 
     pub fn match_tic(&self) -> u32 {
-        self.tic % (MATCH_TICS + INTER_TICS)
+        self.g.match_tic
     }
+    /// 0 play, 1 intermission (PlayerView[45])
     pub fn match_phase(&self) -> i32 {
-        if self.match_tic() < MATCH_TICS {
-            0
-        } else {
-            1
-        }
+        (self.g.phase == crate::game::PH_INTER) as i32
     }
 
     // ------------------------------------------------------------------ the tic
     pub fn tick(&mut self) {
         self.events.clear();
-        let mt = self.match_tic();
-        if mt == 0 {
-            if self.tic > 0 {
-                // new match: frags reset, everyone respawns fresh
-                for i in 0..self.players.len() {
-                    let p = &mut self.players[i];
-                    p.frags = 0;
-                    p.deaths = 0;
-                    p.fresh = true;
-                    p.playerstate = PST_REBORN;
-                }
-            }
-            self.emit(7, 0, 0, 0, 0, 0, 0, 0);
-        }
-        if mt == MATCH_TICS {
-            let mut best = -1i32;
-            let mut bestf = i32::MIN;
-            for p in &self.players {
-                if p.frags > bestf {
-                    bestf = p.frags;
-                    best = p.slot;
-                }
-            }
-            self.emit(8, best, bestf, 0, 0, 0, 0, 0);
-        }
-        if mt >= MATCH_TICS {
+        self.emit_pending();
+        if self.intermission_tick() {
             // intermission: everyone frozen
             self.tic = self.tic.wrapping_add(1);
             return;
@@ -569,9 +594,17 @@ impl World {
         crate::bots::think_all(self);
         #[cfg(feature = "prof")]
         prof::add(0, t0);
+        let freeze = self.g.phase == crate::game::PH_FREEZE;
         for i in 0..self.players.len() {
             if self.players[i].control == CTRL_HUMAN {
                 self.players[i].cmd = self.players[i].human_cmd;
+            }
+            if freeze {
+                // round freeze: look around, nothing else
+                let c = &mut self.players[i].cmd;
+                c.forward = 0;
+                c.side = 0;
+                c.buttons &= !(BT_ATTACK | BT_USE | BT_JUMP);
             }
         }
 
@@ -604,6 +637,7 @@ impl World {
         prof::add(3, t0);
         self.update_specials();
         self.respawn_specials();
+        self.mode_tick();
         self.compact();
         self.leveltime = self.leveltime.wrapping_add(1);
         self.tic = self.tic.wrapping_add(1);
@@ -739,6 +773,16 @@ impl World {
 
     /// G_DoReborn for deathmatch
     pub fn do_reborn(&mut self, slot: usize) {
+        if !self.may_spawn() {
+            // elimination mid-round: wait (spectating) for the next round
+            if self.players[slot].fresh {
+                self.players[slot].fresh = false;
+                if self.deref(self.players[slot].mo).is_some() {
+                    self.remove_player_body(slot);
+                }
+            }
+            return;
+        }
         let fresh = self.players[slot].fresh;
         self.players[slot].fresh = false;
         let old = self.deref(self.players[slot].mo);
@@ -825,13 +869,14 @@ impl World {
     /// G_DeathMatchSpawnPlayer, extended with the generated spawn spots
     pub fn deathmatch_spawn_player(&mut self, slot: usize) {
         let map = self.map.clone();
-        let n = map.spawn_spots.len();
+        let cands = self.spawn_candidates(slot);
+        let n = cands.len();
         if n == 0 {
             return;
         }
         for _ in 0..20 {
             let r = (self.p_random() << 8) | self.p_random();
-            let i = (r as usize) % n;
+            let i = cands[(r as usize) % n];
             let spot = map.spawn_spots[i];
             if self.check_spot(slot, &spot) {
                 self.spawn_player(slot, &spot);
@@ -841,31 +886,33 @@ impl World {
         // scan for any free spot, starting at a random one
         let start = (self.p_random() as usize * n) / 256;
         for k in 0..n {
-            let spot = map.spawn_spots[(start + k) % n];
+            let spot = map.spawn_spots[cands[(start + k) % n]];
             if self.check_spot(slot, &spot) {
                 self.spawn_player(slot, &spot);
                 return;
             }
         }
         // crowded: try positions around the spots
-        for k in 0..n {
-            let spot = map.spawn_spots[(start + k) % n];
-            for (dx, dy) in [(48i16, 0i16), (-48, 0), (0, 48), (0, -48), (48, 48), (-48, -48), (48, -48), (-48, 48)] {
-                let cand = MapThing { x: spot.x.saturating_add(dx), y: spot.y.saturating_add(dy), ..spot };
-                let x = (cand.x as i32) << FRACBITS;
-                let y = (cand.y as i32) << FRACBITS;
-                let ss = map.point_in_subsector(x, y);
-                let sec = map.subsectors[ss].sector as usize;
-                let ssec = map.sector_at((spot.x as i32) << FRACBITS, (spot.y as i32) << FRACBITS);
-                if !map.nav.reach[ss] || (self.sectors[sec].floorheight - self.sectors[ssec].floorheight).abs() > 24 * FRACUNIT {
-                    continue;
-                }
-                if !crate::bots::nav::static_clear(&map, x, y, 17 * FRACUNIT, false) {
-                    continue;
-                }
-                if self.check_spot(slot, &cand) {
-                    self.spawn_player(slot, &cand);
-                    return;
+        for ring in [48i16, 96, 144] {
+            for k in 0..n {
+                let spot = map.spawn_spots[cands[(start + k) % n]];
+                for (dx, dy) in [(1i16, 0i16), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
+                    let cand = MapThing { x: spot.x.saturating_add(dx * ring), y: spot.y.saturating_add(dy * ring), ..spot };
+                    let x = (cand.x as i32) << FRACBITS;
+                    let y = (cand.y as i32) << FRACBITS;
+                    let ss = map.point_in_subsector(x, y);
+                    let sec = map.subsectors[ss].sector as usize;
+                    let ssec = map.sector_at((spot.x as i32) << FRACBITS, (spot.y as i32) << FRACBITS);
+                    if !map.nav.reach[ss] || (self.sectors[sec].floorheight - self.sectors[ssec].floorheight).abs() > 24 * FRACUNIT {
+                        continue;
+                    }
+                    if !crate::bots::nav::static_clear(&map, x, y, 17 * FRACUNIT, false) {
+                        continue;
+                    }
+                    if self.check_spot(slot, &cand) {
+                        self.spawn_player(slot, &cand);
+                        return;
+                    }
                 }
             }
         }
@@ -877,6 +924,7 @@ impl World {
     pub fn spawn_player(&mut self, slot: usize, spot: &MapThing) {
         if self.players[slot].playerstate == PST_REBORN || self.players[slot].playerstate == PST_DEAD {
             self.player_reborn(slot);
+            self.apply_loadout(slot);
         }
         let x = (spot.x as i32) << FRACBITS;
         let y = (spot.y as i32) << FRACBITS;

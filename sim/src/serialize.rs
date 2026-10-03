@@ -15,9 +15,10 @@ use crate::bots::{Bot, Step};
 use crate::map::{Map, MapThing};
 use crate::random::{BotRng, PRandom};
 use crate::specials::*;
+use crate::game::{CapPoint, Config, Game};
 use crate::world::*;
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 pub struct Writer {
     pub buf: Vec<u8>,
@@ -190,12 +191,12 @@ ser_struct!(Step { node, px, py, kind, line });
 ser_struct!(Bot {
     rng, aim_err, react, turn, aggression, path, goal_node, goal_x, goal_y, goal_item, need_plan, next_goal_tic, last_x, last_y, check_x, check_y, check_tic, stuck,
     unstick_until, unstick_side, ban_a, ban_b, ban_until, wait_tics, enemy, enemy_seen, enemy_x, enemy_y, enemy_z, react_left, err_yaw, err_pitch, err_until, strafe,
-    strafe_until, fire_toggle, use_toggle, weapon_key, weapon_cooldown, respawn_delay, hurt_by, yaw, pitch
+    strafe_until, fire_toggle, use_toggle, weapon_key, weapon_cooldown, respawn_delay, hurt_by, yaw, pitch, goal_point
 });
 ser_struct!(Player {
     slot, mo, playerstate, control, cmd, human_cmd, prev_buttons, yaw_offset, pitch, viewz, viewheight, deltaviewheight, bob, onground, health, armorpoints, armortype,
     powers, backpack, frags, deaths, readyweapon, pendingweapon, weaponowned, ammo, maxammo, attackdown, usedown, refire, damagecount, bonuscount, attacker,
-    extralight, fixedcolormap, psprites, dead_tics, jump_cooldown, fresh, color, items, travelled, bot
+    extralight, fixedcolormap, psprites, dead_tics, jump_cooldown, fresh, color, items, travelled, spawn_choice, spec_cycle, bot
 });
 ser_enum!(DoorType { Normal = 0, Close30ThenOpen = 1, Close = 2, Open = 3, RaiseIn5Mins = 4, BlazeRaise = 5, BlazeOpen = 6, BlazeClose = 7 });
 ser_struct!(Door { type_, sector, topheight, speed, direction, topwait, topcountdown });
@@ -208,6 +209,7 @@ ser_enum!(FloorType {
 });
 ser_struct!(FloorMove { type_, crush, sector, direction, newspecial, texture, floordestheight, speed });
 ser_enum!(CeilingType { LowerToFloor = 0, RaiseToHighest = 1, LowerAndCrush = 2, CrushAndRaise = 3, FastCrushAndRaise = 4, SilentCrushAndRaise = 5 });
+ser_struct!(CapPoint { owner, progress, flags });
 ser_struct!(Ceiling { type_, sector, bottomheight, topheight, speed, crush, direction, tag, olddirection });
 
 impl Ser for SThinker {
@@ -249,7 +251,29 @@ impl World {
         w.buf.extend_from_slice(b"DSIM");
         FORMAT_VERSION.put(&mut w);
         crate::SIM_VERSION.put(&mut w);
-        self.map.hash.put(&mut w);
+        // config and the map rotation, by name + content hash
+        let c = &self.g.cfg;
+        for x in [c.mode, c.slots, c.match_tics, c.inter_tics, c.round_tics, c.freeze_tics, c.rounds_to_win, c.tickets, c.friendly_fire as u32] {
+            x.put(&mut w);
+        }
+        (self.g.maps.len() as u32).put(&mut w);
+        for m in &self.g.maps {
+            let name = m.name.as_bytes();
+            (name.len() as u8).put(&mut w);
+            w.buf.extend_from_slice(name);
+            m.hash.put(&mut w);
+        }
+        self.g.map_index.put(&mut w);
+        self.g.match_index.put(&mut w);
+        self.g.phase.put(&mut w);
+        self.g.phase_left.put(&mut w);
+        self.g.match_tic.put(&mut w);
+        self.g.team_score.put(&mut w);
+        self.g.round.put(&mut w);
+        self.g.winner.put(&mut w);
+        self.g.points.put(&mut w);
+        self.g.low_sent.put(&mut w);
+        self.g.pending.put(&mut w);
         self.tic.put(&mut w);
         self.leveltime.put(&mut w);
         self.rng.put(&mut w);
@@ -273,7 +297,7 @@ impl World {
         self.item_queue.put(&mut w);
         self.bodyque.put(&mut w);
         self.bodyqueslot.put(&mut w);
-        self.events.put(&mut w);
+        // events are output of the last tic, not state (their map ids are local)
         *out = w.buf;
     }
 
@@ -283,12 +307,58 @@ impl World {
         v
     }
 
-    pub fn deserialize(map: Rc<Map>, bytes: &[u8]) -> Option<World> {
+    /// a snapshot of a world whose rotation is just `map`
+    pub fn deserialize_one(map: Rc<Map>, bytes: &[u8]) -> Option<World> {
+        World::deserialize(&[map], bytes)
+    }
+
+    /// `registry`: every loaded map; the snapshot's rotation is resolved against it by name
+    /// and content hash (None if a map is missing or the data is bad)
+    pub fn deserialize(registry: &[Rc<Map>], bytes: &[u8]) -> Option<World> {
         let mut r = Reader { b: bytes, p: 0 };
         if r.take(4)? != b"DSIM" {
             return None;
         }
-        if u32::get(&mut r)? != FORMAT_VERSION || u32::get(&mut r)? != crate::SIM_VERSION || u32::get(&mut r)? != map.hash {
+        if u32::get(&mut r)? != FORMAT_VERSION || u32::get(&mut r)? != crate::SIM_VERSION {
+            return None;
+        }
+        let mut cw = [0u32; 9];
+        for x in cw.iter_mut() {
+            *x = u32::get(&mut r)?;
+        }
+        let cfg = Config { mode: cw[0], slots: cw[1], match_tics: cw[2], inter_tics: cw[3], round_tics: cw[4], freeze_tics: cw[5], rounds_to_win: cw[6], tickets: cw[7], friendly_fire: cw[8] != 0 };
+        if cfg.clone().with_defaults() != cfg {
+            return None;
+        }
+        let nmaps = u32::get(&mut r)? as usize;
+        if nmaps == 0 || nmaps > 256 {
+            return None;
+        }
+        let mut maps = Vec::with_capacity(nmaps);
+        for _ in 0..nmaps {
+            let len = u8::get(&mut r)? as usize;
+            let name = r.take(len)?.to_vec();
+            let hash = u32::get(&mut r)?;
+            let m = registry.iter().find(|m| m.hash == hash && m.name.as_bytes() == &name[..])?;
+            maps.push(m.clone());
+        }
+        let mut g = Game::new(cfg, maps);
+        g.map_index = Ser::get(&mut r)?;
+        if g.map_index as usize >= nmaps {
+            return None;
+        }
+        g.match_index = Ser::get(&mut r)?;
+        g.phase = Ser::get(&mut r)?;
+        g.phase_left = Ser::get(&mut r)?;
+        g.match_tic = Ser::get(&mut r)?;
+        g.team_score = Ser::get(&mut r)?;
+        g.round = Ser::get(&mut r)?;
+        g.winner = Ser::get(&mut r)?;
+        g.points = Ser::get(&mut r)?;
+        g.low_sent = Ser::get(&mut r)?;
+        g.pending = Ser::get(&mut r)?;
+        let map = g.maps[g.map_index as usize].clone();
+        if g.phase > crate::game::PH_INTER || (cfg_mode_war(&g) && g.points.len() != map.cap_points.len()) || (!cfg_mode_war(&g) && !g.points.is_empty()) {
             return None;
         }
         let nlines = map.lines.len();
@@ -317,10 +387,14 @@ impl World {
             item_queue: Ser::get(&mut r)?,
             bodyque: Ser::get(&mut r)?,
             bodyqueslot: Ser::get(&mut r)?,
-            events: Ser::get(&mut r)?,
+            events: Vec::new(),
+            g,
             sc: Scratch { line_valid: vec![0; nlines], ..Default::default() },
         };
         if r.p != bytes.len() {
+            return None;
+        }
+        if w.players.len() != w.g.cfg.slots as usize {
             return None;
         }
         // structural validation so bad data cannot cause out-of-bounds panics later
@@ -486,4 +560,8 @@ pub fn hash_bytes(b: &[u8]) -> u32 {
     h = (h ^ (h >> 33)).wrapping_mul(0xff51_afd7_ed55_8ccd);
     h ^= h >> 33;
     (h ^ (h >> 32)) as u32
+}
+
+fn cfg_mode_war(g: &Game) -> bool {
+    g.cfg.mode == crate::game::MODE_WAR
 }

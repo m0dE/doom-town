@@ -552,7 +552,7 @@ impl Nav {
         let mut starts: Vec<usize> = map
             .things
             .iter()
-            .filter(|t| t.type_ == 11 || (1..=4).contains(&t.type_))
+            .filter(|t| t.type_ == 11 || (1..=4).contains(&t.type_) || t.type_ == 9000 || t.type_ == 9001)
             .map(|t| map.point_in_subsector((t.x as i32) << FRACBITS, (t.y as i32) << FRACBITS))
             .collect();
         starts.sort_unstable();

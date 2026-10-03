@@ -39,7 +39,7 @@ fn run_pair(name: &str, tics: u32) {
             c = Some(a.clone());
             rc = ra.clone();
             let bytes = a.serialize();
-            let dw = World::deserialize(map.clone(), &bytes).expect("deserialize");
+            let dw = World::deserialize_one(map.clone(), &bytes).expect("deserialize");
             assert_eq!(dw.serialize(), bytes, "re-serialize differs");
             d = Some(dw);
             rd = ra.clone();
@@ -106,7 +106,7 @@ fn corrupt_snapshots_do_not_panic() {
                 b[i] ^= 1 << rng.below(8);
             }
         }
-        if let Some(mut d) = World::deserialize(map.clone(), &b) {
+        if let Some(mut d) = World::deserialize_one(map.clone(), &b) {
             accepted += 1;
             // a flipped payload bit is still a valid world sometimes; it must run
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

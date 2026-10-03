@@ -164,8 +164,28 @@ impl World {
         let p = &mut self.players[slot];
         p.dead_tics += 1;
         let pressed = p.cmd.buttons & (BT_USE | BT_ATTACK) != 0;
-        if (p.dead_tics >= RESPAWN_MIN_TICS && pressed) || p.dead_tics >= RESPAWN_FORCE_TICS {
-            p.playerstate = PST_REBORN;
+        match self.g.cfg.mode {
+            crate::game::MODE_ELIM => {
+                // dead until the next round; attack cycles whom we watch
+                let p = &mut self.players[slot];
+                if p.cmd.buttons & BT_ATTACK != 0 && p.prev_buttons & BT_ATTACK == 0 {
+                    p.spec_cycle = p.spec_cycle.wrapping_add(1) & 0xffff;
+                }
+            }
+            crate::game::MODE_WAR => {
+                // respawn waves; weapon-select picks where (1 base, 2.. points)
+                let sel = ((p.cmd.buttons & BT_WEAPONMASK) >> BT_WEAPONSHIFT) as i32;
+                if sel == 1 {
+                    p.spawn_choice = -1;
+                } else if sel >= 2 {
+                    p.spawn_choice = sel - 2;
+                }
+            }
+            _ => {
+                if (p.dead_tics >= RESPAWN_MIN_TICS && pressed) || p.dead_tics >= RESPAWN_FORCE_TICS {
+                    p.playerstate = PST_REBORN;
+                }
+            }
         }
     }
 

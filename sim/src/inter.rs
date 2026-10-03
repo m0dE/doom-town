@@ -415,6 +415,7 @@ impl World {
                 _ => self.players[tp].frags -= 1,
             }
             self.players[tp].deaths += 1;
+            self.score_death(tp, splayer);
             let killer = match splayer {
                 Some(sp) => sp as i32,
                 None => -1,
@@ -467,6 +468,16 @@ impl World {
         let inflictor = if inflictor != NONE && self.alive(inflictor) { inflictor } else { NONE };
         let source = if source != NONE && self.alive(source) { source } else { NONE };
         let player = self.player_of(target);
+        // team modes: no friendly fire (self-damage and telefrags stay)
+        if let Some(tp) = player {
+            if !self.g.cfg.friendly_fire && mod_ != mod_::TELEFRAG {
+                if let Some(sp) = self.player_of(source) {
+                    if sp != tp && self.same_team(sp, tp) {
+                        return;
+                    }
+                }
+            }
+        }
         let source_saw = match self.player_of(source) {
             Some(sp) => self.players[sp].readyweapon == WP_CHAINSAW,
             None => false,

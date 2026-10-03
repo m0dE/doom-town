@@ -9,7 +9,7 @@ use crate::bots::nav::static_clear;
 use crate::fixed::*;
 use crate::map::*;
 
-pub const MAX_SPOTS: usize = 256;
+pub const MAX_SPOTS: usize = 512;
 const MIN_SPACING: i32 = 96;
 const GRID: i32 = 128;
 
@@ -21,7 +21,7 @@ pub fn build_spawn_spots(map: &Map) -> Vec<MapThing> {
         }
     }
     for t in &map.things {
-        if (1..=4).contains(&t.type_) {
+        if (1..=4).contains(&t.type_) || t.type_ == 9000 || t.type_ == 9001 {
             spots.push(*t);
         }
     }
@@ -90,7 +90,7 @@ pub fn build_spawn_spots(map: &Map) -> Vec<MapThing> {
             if map.things.iter().any(|t| (t.x as i32 - x).abs() < 48 && (t.y as i32 - y).abs() < 48) {
                 continue;
             }
-            spots.push(MapThing { x: x as i16, y: y as i16, angle: ((k % 8) * 45) as i16, type_: 11, options: 7 });
+            spots.push(MapThing { x: x as i16, y: y as i16, angle: ((k % 8) * 45) as i16, type_: -1, options: 7 });
             k += 1;
         }
     }

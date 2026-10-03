@@ -1,4 +1,4 @@
-# Freedoom Deathmatch on ARRR — design
+# Doom Town on ARRR — design
 
 A 64-player Doom deathmatch that runs in a web page, built to dogfood arrr-network.
 This file is the contract between the three parts (sim, renderer, shell). Change it
@@ -17,8 +17,10 @@ first, then the code.
   their *own* DOOM2.WAD from disk (kept in their browser only) to get the original art;
   lump names are compatible, so this is only an art override.
 - No GZDoom/UZDoom-derived material: id's source is GPL-2.0-only, which is incompatible with their GPL-3 files.
-- **Name.** "DOOM" is id/ZeniMax's trademark. Player-facing title: **FREEDOOM
-  DEATHMATCH** (short: "Freedoom DM"). Directory and code identifiers may say `doom`.
+- **Name.** Player-facing title: **DOOM TOWN** (the user's choice, 2026-10-03; repo
+  github.com/m0dE/doom-town). "DOOM" is id/ZeniMax's trademark: never use id's logo
+  artwork, keep "Game art: Freedoom" visible, and the README carries the
+  not-affiliated line. Directory and code identifiers may say `doom`.
 - The published bundle carries `LICENSE.txt`, `COPYING-FREEDOOM.txt` and `source.zip`
   (the full corresponding source of this directory), linked from the menu's footer —
   that is how GPL §3(a) is met for a web build.
@@ -47,7 +49,7 @@ games/doom/
 
 Build: `npm run build:sim` (cargo → `public/doomsim.wasm`, committed so the client builds
 without Rust), `npm run pak` (freedm.wad → `public/freedm-lite.wad`, committed),
-`npm run dev`, `npm run export` (→ `export/freedm/` + zip, committed like vibe-strike).
+`npm run dev`, `npm run export` (→ `export/doom-town/` + zip, committed like vibe-strike).
 
 ## Game rules
 
@@ -76,6 +78,144 @@ without Rust), `npm run pak` (freedm.wad → `public/freedm-lite.wad`, committed
 - **Tic rate:** the app runs its rooms at **35 Hz** (Doom's TICRATE): one network frame
   = one Doom tic. If a node reports a different rate, `ticsPerFrame = max(1, round(35/fps))`
   sim tics run per frame (offline loopback runs at 35).
+
+## Modes, teams and map rotation (v2 — requested 2026-10-03)
+
+The user asked for more maps, team modes "like Counter-Strike", 100 vs 100 war maps,
+and deathmatch maps that restart after a set time so scores reset. A room's **mode is a
+pure function of its room name** (`src/menu/modes.ts`), so every client builds the same
+world config without asking anyone.
+
+| mode | id | slots | teams | rules |
+|---|---|---|---|---|
+| Deathmatch | 0 | 64 | – | as above; 10-min match, 10 s scoreboard, next map in rotation |
+| Team Deathmatch | 1 | 64 (32v32) | red/blue | team frags; no friendly fire (self-damage stays); 10-min match, next map |
+| Elimination (CS-style) | 2 | 24 (12v12) | red/blue | rounds of ≤ 2:30 with 5 s freeze at the start; no respawn inside a round (the dead spectate); a team wiped out or the team with more alive at time-out loses the round (tie = draw); every round everyone restarts at full health with pistol + shotgun + 50 shells; map weapons stay as usual; first to 7 rounds wins the match, then next map |
+| War (conquest) | 3 | 200 (100v100) | red/blue | massive maps with 5 capture points; standing in a point's radius with more teammates than enemies captures it over 10 s (faster with more); each team starts with 3000 tickets (600 drained in ~2 min with 200 bots, measured), loses 1 per death and 1 every 5 s while holding fewer points than the enemy; 0 tickets or 20 min ends the match; respawn wave every 10 s at your team's base or at any point your team owns (the player picks with weapon-select keys while dead; bots choose the point nearest the front) |
+
+- **Teams:** slot `s` is on team `s % 2` (0 red, 1 blue) — a human taking a bot slot
+  keeps the team, so teams stay balanced by construction. Team colors override the
+  player's chosen color (red/blue translation; the player's own color is kept as a
+  shade within the team ramp only if cheap, otherwise plain team colors).
+- **Team spawns:** FreeDM maps have no team starts. At map load the sim splits the map's
+  spawn points into two sides deterministically (the two most distant DM starts seed a
+  2-means clustering over all spawn points; side 0 = red). Generated war maps carry
+  explicit team starts (thing types 9000 red / 9001 blue) and capture points
+  (thing type 9010, angle field = radius/8).
+- **Rotation:** each mode has an ordered map list; match `k` (counted from tic 0 of the
+  room's world, so late joiners agree) plays `maps[k % n]`. When the intermission ends
+  the world switches map in place: mobjs/specials are rebuilt from the new map's things,
+  every player respawns, scores reset. `world_view_match` exposes the current and the
+  next map so the client can prepare the next map's visuals during the match.
+  - Deathmatch / TDM: FreeDM MAP19 Tech Isle, MAP24 Flooded Base, MAP20 Warehouse,
+    MAP30, MAP27, MAP32 (the largest FreeDM maps).
+  - Elimination: medium FreeDM maps with good two-sided layouts (MAP01, MAP11, MAP18,
+    MAP20 — the map agent picks and documents the final list).
+  - War: generated maps `WAR01`.. built by `tools/maps/` (see below).
+- **Map data delivery:** map lumps of every map in every rotation ship in the base pak
+  (they are small and the sim must never wait for a download). Map *art* (textures,
+  flats) can ship per map (`public/maps/<MAP>.wad`), fetched for the current map at
+  join and the next map during the match; the renderer shows the new map when its art
+  is in, never blocking the sim.
+- **War maps** (`tools/maps/`): authored in a small TypeScript map DSL (rooms, outdoor
+  areas, bridges, bunkers, ramps, water/nukage, sky), compiled to a vanilla-format PWAD
+  with our own node builder (NODES/SEGS/SSECTORS) — BLOCKMAP and REJECT optional: the
+  sim builds its own blockmap at load when the lump is missing or would overflow, and
+  treats a missing REJECT as "no rejection". Size: up to ~24k × 24k units (WAD
+  coordinates are i16). Freedoom textures only; must look good (lighting variety,
+  detail, landmarks) and be navigable by bots.
+
+### Random bosses (requested 2026-10-03)
+
+The user: "in some of the maps, can we throw in random boss demons and when it dies it drops
+BFG (spider or cyberdemon)" and "it should clearly indicate on room name saying random bosses".
+
+- A **room modifier**, not a mode: Deathmatch and Team Deathmatch rooms can have it. Boss
+  rooms are their own rows in the server list, named so it's obvious, e.g.
+  `na-1 · Random bosses` (room id `na-boss-1`; `src/menu/modes.ts` parses it).
+  Elimination and War rooms don't get bosses.
+- **Spawning:** 60 s into every match, and then 90 s after the previous boss dies, a boss
+  appears at a spot chosen deterministically (`P_Random` / sim rng) among spawn points
+  that pass `P_CheckPosition` for its size and are at least 1024 units from every live
+  player. Cyberdemon or Spider Mastermind, 50/50. One boss alive at a time; an alive boss
+  is removed at the match end.
+- **Behaviour:** vanilla monster AI ported from p_enemy.c for these two (A_Look, A_Chase,
+  A_FaceTarget, P_Move/P_NewChaseDir, A_CyberAttack rockets, A_SpidRefire/A_SPosAttack
+  chaingun, A_Hoof/A_Metal/A_BabyMetal sounds, pain/death states) — targets the
+  nearest visible player, retargets when hurt by someone else (vanilla infighting rule for
+  players). Health scaled for crowds: vanilla × (1 + live players / 16), capped at ×5.
+- **Reward:** on death it drops a BFG 9000 (MF_DROPPED: taken by the first player who
+  touches it, never respawns — unlike map weapons) plus a cell pack, at the death spot.
+  The killer gets +5 frags (TDM: the team gets +5). Bots treat a live boss as a target
+  of opportunity and race for a dropped BFG.
+- **Config/ABI:** `world_new_cfg` gets an optional word after the seed: `flags`
+  (bit0 = random bosses). `world_view_match` appends: boss mobj id (0 none), boss type
+  (mobjtype), boss health, boss max health, tics until the next boss (−1 none).
+  Events: 14 boss spawned (a = mobjtype, x/y/z), 15 boss killed (a = mobjtype,
+  b = killer slot, −1 none).
+- **Client:** room row badge "Random bosses"; on spawn a big banner ("A CYBERDEMON HAS
+  ENTERED THE TOWN") + its sight sound map-wide; a boss health bar at the top while one
+  lives; killfeed line on death ("Gibsy slew the Spider Mastermind — BFG dropped!").
+  The CYBR/SPID sprites and DSCYB*/DSSPI*/DSHOOF/DSMETAL sounds ship in the base pak
+  (FreeDM has them).
+
+### ABI additions (v2)
+
+```
+world_new_cfg(cfg_ptr, cfg_len) -> h      replaces world_new for new code (world_new stays = FFA MAP-only)
+    cfg = u32 words: [version=2, mode, slots, match_tics, intermission_tics,
+                      round_tics, freeze_tics, rounds_to_win, tickets, friendly_fire(0/1),
+                      map_count, map_id × map_count]
+    (0 in a timing field = the mode's default from the table above)
+world_view_match(h) -> ptr                i32 words:
+    0 mode  1 phase (0 play, 1 round freeze, 2 round over, 3 intermission)
+    2 tics left in this phase  3 match index  4 current map id  5 next map id
+    6 team score red  7 team score blue  (frags / rounds won / tickets)
+    8 round number  9 alive red  10 alive blue  11 winner (-1 none, 0/1 team, slot for FFA)
+    12 point count, then per point 6 words: x, y (fixed), radius (fixed), owner (-1/0/1),
+       capture progress (-100..100, + toward blue), contesting flags
+world_view_players: PlayerRow gains a team word → 9 × i32: slot, is_human, mobj id,
+    frags, deaths, health, state, color, team (-1 none)
+PlayerView: 48 team, 49 can_respawn_at bitmask (war), 50 spectating slot (-1 none)
+world_deserialize(ptr, len) no longer needs a map id: the snapshot records which map
+    (by the map's name + content hash) and resolves it against loaded maps (0 if absent)
+Events: 9 map change (a = new map id), 10 round start (a = round), 11 round end
+    (a = winning team, -1 draw), 12 point captured (a = point, b = team),
+    13 tickets low (a = team)
+Buttons while dead in war: weapon-select bits pick the spawn (1 = base, 2.. = points).
+```
+
+As implemented (sim_version 3):
+
+- `world_new_cfg`: an optional word after the map ids is the seed (default 0). Teams in
+  every mode but FFA; team colors are Doom translations 3 (red) and 1 (indigo/blue).
+  Returns 0 if the version word is not 2, a map id is unknown, or the length is short.
+- `world_deserialize(ptr, len)` resolves the snapshot's rotation against every map_load'ed
+  map (name + content hash). `world_deserialize_map(map_id, ptr, len)` is the old
+  three-argument form kept for old callers (the map id is ignored). Last-tic events
+  are not part of a snapshot (they carry local map ids); a deserialized world reports no
+  events until it ticks.
+- Event fields: 7 match start (a = match index, b = mode); 8 match end (a = winner: slot
+  in FFA, team in the team modes, -1 draw; b = winner's frags / team score; c = match
+  index); 9 map change (a = new map id, b = rotation index, c = match index); 10 round
+  start (a = round); 11 round end (a = winning team or -1, b = round, c = red rounds,
+  d = blue rounds); 12 point captured (a = point, b = team, x/y = point); 13 tickets low
+  (a = team, b = tickets left, sent once per match at <= 100).
+- `world_view_match` capture progress is -100 (red) .. 100 (blue); the flags word is
+  bit 0 red inside, bit 1 blue inside. Capturing: progress moves by min(4, majority) per
+  tic (10 s alone from neutral), a point turns neutral when progress crosses 0 against
+  its owner. Phase 2 (round over) lasts 3 s; the freeze phase lets players look but not
+  move, fire, use or jump.
+- PlayerView is 51 words (48 team, 49 respawn mask: bit 0 base, bit 1+i point i;
+  50 spectated slot, elimination only; attack cycles it). PlayerView[44] is the match
+  tic, [45] is 1 during the intermission only.
+- War respawn waves run every 10 s of match time for players dead >= 1 s; the
+  weapon-select nibble while dead picks base (1) or point (n-2). Elimination: a player
+  who joins mid-round waits for the next round.
+- Map loading: BLOCKMAP is rebuilt by the sim when missing, past 128 KB (u16 offsets),
+  or not covering every vertex; REJECT may be missing. Things 9000/9001 are team spawn
+  spots, 9010 capture points (angle = radius / 8, default 192). FreeDM maps get five
+  generated points (middle of the two bases, then spread out).
 
 ## Determinism
 
@@ -270,6 +410,21 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
 - Rendering follows `harness/INTEGRATION.md`: everything drawn comes off `lockstep.view()`;
   remote mobjs from a ring of confirmed `MobjView`s at `frame + alpha`, the local player
   from the predicted ring at `selfAlpha`. Projectiles extrapolate along momx/momy.
+- Own projectiles (MT_ROCKET, MT_PLASMA, MT_BFG) are drawn from the predicted world at
+  `selfAlpha`, like the camera, so they leave the barrel on the frame the shot is fired.
+  MobjView has no owner: a missile of those types is ours when it first appears (absent
+  the tic before, in the same world) within 64 units of our body; the id is remembered
+  and every confirmed copy of it is skipped, so nothing is drawn twice. The predicted
+  copy is drawn for the missile's whole life (explosion included) rather than handed
+  back to the confirmed one, which would jump it back by the prediction lead; the
+  predicted world is rebuilt from confirmed state, so it carries the confirmed ids and
+  outcome. With no prediction to draw from, confirmed copies are drawn as usual.
+  (A rival firing the same tic within 64 units of us could have a missile claimed as
+  ours: it is then drawn from prediction too, which is harmless.)
+- Player bodies: the 3D box marine (`src/model`, via `src/game/bodies.ts` on the
+  renderer's `setPlayerBodyRenderer` hook) by default, Doom's sprites when the Esc menu
+  says "Players: Classic sprites" (`prefs.players`). Corpses (PLAY mobjs no longer a
+  player's body) are 3D too and keep their player's colour.
 - The renderer is fed a `RenderFrame` (`src/render/types.ts`) by the game loop:
   interpolated mobjs, sector heights/light, line textures, camera (x, y, z, yaw, pitch),
   psprites, and the event list for effects. It never touches the sim.

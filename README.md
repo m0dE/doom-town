@@ -1,4 +1,4 @@
-# Freedoom Deathmatch
+# Doom Town
 
 A 100-player Doom deathmatch that runs in a web page, on [arrr-network](https://arrr.fun).
 Open the page, pick a server, play. Bots fill every empty slot, so a room is always a
@@ -30,7 +30,7 @@ Game data is from the Freedoom project, BSD-3-Clause
 ([assets/COPYING-FREEDOOM.txt](assets/COPYING-FREEDOOM.txt),
 [assets/CREDITS-FREEDOOM.txt](assets/CREDITS-FREEDOOM.txt)).
 
-DOOM is a trademark of id Software. This project is not affiliated with or endorsed by
+The game art is Freedoom's, not id's. DOOM is a trademark of id Software. This project is not affiliated with or endorsed by
 id Software, ZeniMax or Bethesda.
 
 This repository is published from the arrr-mono monorepo (`games/doom/`); each commit

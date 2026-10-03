@@ -19,7 +19,7 @@ use crate::world::*;
 use nav::*;
 
 /// at most this many A* searches per tic over all bots
-const PLAN_BUDGET: i32 = 4;
+const PLAN_BUDGET: i32 = 6;
 const ENEMY_FORGET_TICS: u32 = 35 * 3;
 const ANG1: u32 = ANG45 / 45;
 
@@ -81,6 +81,8 @@ pub struct Bot {
     // last command decided (world angle, pitch)
     pub yaw: Angle,
     pub pitch: i32,
+    /// war: the capture point being worked on (-1 none)
+    pub goal_point: i32,
 }
 
 impl Bot {
@@ -90,7 +92,7 @@ impl Bot {
         let react = rng.range(5, 16);
         let turn = (ANG1 * 9) + rng.below(ANG1 * 14);
         let aggression = rng.range(20, 95);
-        Bot { rng, aim_err, react, turn, aggression, goal_node: -1, need_plan: true, ..Default::default() }
+        Bot { rng, aim_err, react, turn, aggression, goal_node: -1, need_plan: true, goal_point: -1, ..Default::default() }
     }
     pub fn reset(&mut self) {
         self.path.clear();
@@ -117,8 +119,72 @@ fn angdiff(a: Angle, b: Angle) -> i32 {
     a.wrapping_sub(b) as i32
 }
 
+/// approximate distance in map units (i64 inside: war maps are wider than 32k units
+/// diagonally, which overflows P_AproxDistance)
 fn dist(x1: Fixed, y1: Fixed, x2: Fixed, y2: Fixed) -> i32 {
-    aprox_distance(x2.wrapping_sub(x1), y2.wrapping_sub(y1)) >> FRACBITS
+    let dx = ((x2 as i64 - x1 as i64).abs()) >> FRACBITS;
+    let dy = ((y2 as i64 - y1 as i64).abs()) >> FRACBITS;
+    let d = if dx < dy { dx + dy - (dx >> 1) } else { dx + dy - (dy >> 1) };
+    d.min(i32::MAX as i64) as i32
+}
+
+/// players binned on a coarse grid, rebuilt once per tic (scratch, not state)
+#[derive(Clone, Default)]
+pub struct Bins {
+    pub ox: i32,
+    pub oy: i32,
+    pub w: i32,
+    pub h: i32,
+    pub cells: Vec<Vec<u16>>,
+}
+const BIN_SHIFT: i32 = 10; // 1024-unit cells
+
+fn build_bins(w: &mut World) {
+    let map = w.map.clone();
+    let mut b = std::mem::take(&mut w.sc.bins);
+    b.ox = map.bmaporgx >> FRACBITS;
+    b.oy = map.bmaporgy >> FRACBITS;
+    b.w = ((map.bmapwidth * 128) >> BIN_SHIFT) + 1;
+    b.h = ((map.bmapheight * 128) >> BIN_SHIFT) + 1;
+    let n = (b.w * b.h) as usize;
+    if b.cells.len() != n {
+        b.cells = vec![Vec::new(); n];
+    }
+    for c in b.cells.iter_mut() {
+        c.clear();
+    }
+    for (i, p) in w.players.iter().enumerate() {
+        if p.playerstate != PST_LIVE {
+            continue;
+        }
+        if let Some(h) = w.deref(p.mo) {
+            let m = w.mo(h);
+            let cx = (((m.x >> FRACBITS) - b.ox) >> BIN_SHIFT).clamp(0, b.w - 1);
+            let cy = (((m.y >> FRACBITS) - b.oy) >> BIN_SHIFT).clamp(0, b.h - 1);
+            b.cells[(cy * b.w + cx) as usize].push(i as u16);
+        }
+    }
+    w.sc.bins = b;
+}
+
+/// live players (slots) within `r` units of (x, y), in slot order
+fn players_near(w: &World, x: Fixed, y: Fixed, r: i32, out: &mut Vec<usize>) {
+    out.clear();
+    let b = &w.sc.bins;
+    if b.w == 0 {
+        return;
+    }
+    let cx = ((x >> FRACBITS) - b.ox) >> BIN_SHIFT;
+    let cy = ((y >> FRACBITS) - b.oy) >> BIN_SHIFT;
+    let k = (r >> BIN_SHIFT) + 1;
+    for gy in (cy - k).max(0)..=(cy + k).min(b.h - 1) {
+        for gx in (cx - k).max(0)..=(cx + k).min(b.w - 1) {
+            for &s in &b.cells[(gy * b.w + gx) as usize] {
+                out.push(s as usize);
+            }
+        }
+    }
+    out.sort_unstable();
 }
 
 /// signed pitch (BAM) to look from (dist, dz)
@@ -147,6 +213,7 @@ pub fn think_all(w: &mut World) {
             b.last_y = y;
         }
     }
+    build_bins(w);
     // rotate who gets the planning budget first
     let start = if n > 0 { (w.tic as usize) % n } else { 0 };
     for k in 0..n {
@@ -180,8 +247,11 @@ fn think(w: &mut World, slot: usize, budget: &mut i32) {
         let p = &w.players[slot];
         let want = p.dead_tics >= RESPAWN_MIN_TICS + p.bot.respawn_delay;
         let mut b = 0u16;
-        if want && tic.is_multiple_of(2) {
+        if want && tic.is_multiple_of(2) && w.mode() != crate::game::MODE_ELIM {
             b = BT_ATTACK;
+        }
+        if w.mode() == crate::game::MODE_WAR {
+            b = war_spawn_choice(w, slot) << BT_WEAPONSHIFT;
         }
         let yaw = w.mo(h).angle;
         set_cmd(w, slot, yaw, 0, 0, 0, b);
@@ -641,8 +711,10 @@ fn acquire_enemy(w: &mut World, slot: usize, h: u32) {
     let tic = w.tic;
     let mut cands: Vec<(i32, u32)> = Vec::new();
     let hurt_by = w.deref(w.players[slot].bot.hurt_by);
-    for j in 0..w.players.len() {
-        if j == slot {
+    let mut near = Vec::new();
+    players_near(w, x, y, 3000, &mut near);
+    for j in near {
+        if j == slot || w.same_team(slot, j) {
             continue;
         }
         let e = match w.deref(w.players[j].mo) {
@@ -875,12 +947,11 @@ fn item_value(w: &World, slot: usize, t: usize) -> i32 {
     }
 }
 
-fn choose_goal(w: &mut World, slot: usize, h: u32) {
-    let (x, y) = {
+fn best_item(w: &mut World, slot: usize, h: u32, maxd: i32) -> Option<(i64, u32)> {
+    let (x, y, ss) = {
         let m = w.mo(h);
-        (m.x, m.y)
+        (m.x, m.y, m.subsector)
     };
-    let tic = w.tic;
     let map = w.map.clone();
     let nav = &map.nav;
     let mut best: Option<(i64, u32)> = None;
@@ -896,10 +967,10 @@ fn choose_goal(w: &mut World, slot: usize, h: u32) {
             continue;
         }
         let d = dist(x, y, m.x, m.y);
-        if d > 4000 {
+        if d > maxd {
             continue;
         }
-        if !nav.reach[m.subsector as usize] && !nav.reach[w.mo(h).subsector as usize] {
+        if !nav.reach[m.subsector as usize] && !nav.reach[ss as usize] {
             // both outside the main area: allow (same pocket); otherwise skip pockets
         } else if !nav.reach[m.subsector as usize] {
             continue;
@@ -914,30 +985,173 @@ fn choose_goal(w: &mut World, slot: usize, h: u32) {
             best = Some((score, o));
         }
     }
+    best
+}
+
+fn set_goal_item(w: &mut World, slot: usize, o: u32, tics: u32) {
+    let tic = w.tic;
+    let (id, x, y, ss) = {
+        let m = w.mo(o);
+        (m.id, m.x, m.y, m.subsector)
+    };
     let b = &mut w.players[slot].bot;
+    b.goal_item = MRef { h: o, id };
+    b.goal_x = x;
+    b.goal_y = y;
+    b.goal_node = ss as i32;
+    b.goal_point = -1;
+    b.next_goal_tic = tic + tics + b.rng.below(35 * 4);
+}
+
+fn set_goal_pos(w: &mut World, slot: usize, gx: Fixed, gy: Fixed, tics: u32) {
+    let tic = w.tic;
+    let node = w.map.point_in_subsector(gx, gy) as i32;
+    let b = &mut w.players[slot].bot;
+    b.goal_item = MRef::NULL;
+    b.goal_x = gx;
+    b.goal_y = gy;
+    b.goal_node = node;
+    b.next_goal_tic = tic + tics + b.rng.below(35 * 5);
+}
+
+fn choose_goal(w: &mut World, slot: usize, h: u32) {
+    match w.mode() {
+        crate::game::MODE_ELIM => elim_goal(w, slot, h),
+        crate::game::MODE_WAR => war_goal(w, slot, h),
+        _ => dm_goal(w, slot, h),
+    }
+}
+
+fn random_spot(w: &mut World, slot: usize, team: i32) -> Option<(Fixed, Fixed)> {
+    let map = w.map.clone();
+    let cand: Vec<usize> = (0..map.spawn_spots.len()).filter(|&i| team < 0 || map.spot_team.get(i).copied() == Some(team as u8)).collect();
+    let list: Vec<usize> = if cand.is_empty() { (0..map.spawn_spots.len()).collect() } else { cand };
+    if list.is_empty() {
+        return None;
+    }
+    let i = list[w.players[slot].bot.rng.below(list.len() as u32) as usize];
+    let sp = map.spawn_spots[i];
+    Some(((sp.x as i32) << FRACBITS, (sp.y as i32) << FRACBITS))
+}
+
+fn dm_goal(w: &mut World, slot: usize, h: u32) {
+    let best = best_item(w, slot, h, 4000);
+    let roll = w.players[slot].bot.rng.chance(1, 2);
     match best {
-        Some((sc, o)) if sc > 1500 || b.rng.chance(1, 2) => {
-            let m = w.mobjs[o as usize].as_ref().unwrap();
-            b.goal_item = MRef { h: o, id: m.id };
-            b.goal_x = m.x;
-            b.goal_y = m.y;
-            b.goal_node = m.subsector as i32;
-            b.next_goal_tic = tic + 35 * 8 + b.rng.below(35 * 4);
-        }
+        Some((sc, o)) if sc > 1500 || roll => set_goal_item(w, slot, o, 35 * 8),
         _ => {
-            // roam to a random spawn spot / open area
-            let n = map.spawn_spots.len().max(1);
-            let i = b.rng.below(n as u32) as usize;
-            if let Some(sp) = map.spawn_spots.get(i) {
-                let gx = (sp.x as i32) << FRACBITS;
-                let gy = (sp.y as i32) << FRACBITS;
-                b.goal_item = MRef::NULL;
-                b.goal_x = gx;
-                b.goal_y = gy;
-                b.goal_node = map.point_in_subsector(gx, gy) as i32;
-                b.next_goal_tic = tic + 35 * 10 + b.rng.below(35 * 6);
+            if let Some((gx, gy)) = random_spot(w, slot, -1) {
+                set_goal_pos(w, slot, gx, gy, 35 * 10);
             }
         }
+    }
+}
+
+/// elimination: grab a good weapon if one is close, else push towards the enemy side or
+/// move with a teammate
+fn elim_goal(w: &mut World, slot: usize, h: u32) {
+    if let Some((sc, o)) = best_item(w, slot, h, 900) {
+        if sc > 4000 {
+            return set_goal_item(w, slot, o, 35 * 6);
+        }
+    }
+    let team = w.team_of(slot);
+    let group = w.players[slot].bot.rng.chance(1, 3);
+    if group {
+        let mates: Vec<usize> = (0..w.players.len())
+            .filter(|&i| i != slot && w.team_of(i) == team && w.players[i].playerstate == PST_LIVE && w.deref(w.players[i].mo).is_some())
+            .collect();
+        if !mates.is_empty() {
+            let i = mates[w.players[slot].bot.rng.below(mates.len() as u32) as usize];
+            let m = w.mo(w.deref(w.players[i].mo).unwrap());
+            let (gx, gy) = (m.x, m.y);
+            return set_goal_pos(w, slot, gx, gy, 35 * 5);
+        }
+    }
+    if let Some((gx, gy)) = random_spot(w, slot, 1 - team) {
+        set_goal_pos(w, slot, gx, gy, 35 * 8);
+    }
+}
+
+/// war: go capture or defend points, spread over them; patch up when hurt
+fn war_goal(w: &mut World, slot: usize, h: u32) {
+    let (x, y) = {
+        let m = w.mo(h);
+        (m.x, m.y)
+    };
+    if w.players[slot].health < 40 {
+        if let Some((sc, o)) = best_item(w, slot, h, 700) {
+            if sc > 2000 {
+                return set_goal_item(w, slot, o, 35 * 5);
+            }
+        }
+    }
+    let map = w.map.clone();
+    let team = w.team_of(slot);
+    let mut best: Option<(i64, usize)> = None;
+    for (i, p) in w.g.points.iter().enumerate() {
+        let (px, py, _) = map.cap_points[i];
+        let d = dist(x, y, px, py) as i64;
+        let enemy_on = p.flags & (if team == 0 { 2 } else { 1 }) != 0;
+        let weight: i64 = if p.owner == team {
+            if enemy_on || p.progress.abs() < crate::game::CAP_FULL {
+                90
+            } else {
+                12
+            }
+        } else if p.owner < 0 {
+            120
+        } else {
+            100
+        };
+        // per-bot preference spreads the team over the points
+        let pref = ((slot as u32).wrapping_mul(2654435761) >> (i as u32 * 3 % 29)) as i64 & 63;
+        let jitter = 70 + w.players[slot].bot.rng.below(60) as i64 + pref;
+        let score = weight * jitter * 1000 / (d + 1500);
+        if best.is_none_or(|(bs, _)| score > bs) {
+            best = Some((score, i));
+        }
+    }
+    if let Some((_, i)) = best {
+        let (px, py, r) = map.cap_points[i];
+        let b = &mut w.players[slot].bot;
+        let rr = (r >> FRACBITS) / 2;
+        let ox = b.rng.range(-rr, rr);
+        let oy = b.rng.range(-rr, rr);
+        let (gx, gy) = (px + (ox << FRACBITS), py + (oy << FRACBITS));
+        let node = map.point_in_subsector(gx, gy);
+        let (gx, gy) = if map.nav.reach[node] { (gx, gy) } else { (px, py) };
+        set_goal_pos(w, slot, gx, gy, 35 * 4);
+        w.players[slot].bot.goal_point = i as i32;
+        return;
+    }
+    dm_goal(w, slot, h)
+}
+
+/// war respawn choice: the owned point closest to contested ground, else base
+fn war_spawn_choice(w: &World, slot: usize) -> u16 {
+    let team = w.team_of(slot);
+    let map = &w.map;
+    let mut best: Option<(i64, usize)> = None;
+    for (i, p) in w.g.points.iter().enumerate() {
+        if p.owner != team {
+            continue;
+        }
+        let (ax, ay, _) = map.cap_points[i];
+        let mut dmin = i64::MAX;
+        for (j, q) in w.g.points.iter().enumerate() {
+            if q.owner != team {
+                let (bx, by, _) = map.cap_points[j];
+                dmin = dmin.min(dist(ax, ay, bx, by) as i64);
+            }
+        }
+        if best.is_none_or(|(bd, _)| dmin < bd) {
+            best = Some((dmin, i));
+        }
+    }
+    match best {
+        Some((_, i)) if i < 14 => (i + 2) as u16,
+        _ => 1,
     }
 }
 
@@ -981,7 +1195,7 @@ fn plan(w: &mut World, slot: usize, start: usize) {
             found = true;
             break;
         }
-        if expanded > 4000 {
+        if expanded > n {
             break;
         }
         let base = nav.first[a] as usize;

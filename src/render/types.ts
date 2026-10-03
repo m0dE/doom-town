@@ -129,6 +129,13 @@ export interface PlayerBodyContext {
   lightOf(m: RenderMobj): number;
   /** floor height under the body (map units, moving floors included) */
   floorOf(m: RenderMobj): number;
+  /** ceiling height over the body (map units) */
+  ceilOf(m: RenderMobj): number;
+  /** this frame's mobj of a player slot (the camera's own body included), if drawn */
+  playerAt(slot: number): RenderMobj | undefined;
+  /** the frame's sim events (obituaries pick the deaths that throw bodies) */
+  events: ArrayLike<RenderEvent>;
+  eventCount: number;
   /** dynamic light (linear RGB, renderer gain applied) at map point x, y, z for a body in `m`'s sector */
   dynLightAt(m: RenderMobj, z: number, out: import('three').Vector3): import('three').Vector3;
   extralight: number;

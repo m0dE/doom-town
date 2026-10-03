@@ -197,3 +197,24 @@ fn built_blockmap_and_big_maps() {
     let bytes = w2.serialize();
     assert!(World::deserialize(&reg, &bytes).is_some());
 }
+
+#[test]
+fn ghost_players_pass_through() {
+    let reg = registry(&["MAP19"]);
+    for flags in [0, 2] {
+        let mut w = World::new_cfg(Config { flags, ..Config::mode(MODE_TDM, 8) }, reg.clone(), 7);
+        for _ in 0..5 {
+            w.tick();
+        }
+        let live: Vec<u32> = (0..8).filter_map(|s| w.deref(w.players[s].mo)).filter(|&h| w.mo(h).health > 0).collect();
+        assert!(live.len() >= 2, "players spawned");
+        let (a, b) = (live[0], live[1]);
+        let (bx, by) = (w.mo(b).x, w.mo(b).y);
+        // standing exactly on another player: blocked normally, allowed in a ghost room
+        assert_eq!(w.check_position(a, bx, by), flags != 0, "flags {}", flags);
+    }
+    let cfg = Config { match_tics: 35 * 60, inter_tics: 35 * 2, flags: 2, ..Config::mode(MODE_TDM, 64) };
+    let (w, s) = run_checked(&reg, cfg, 35 * 90, "TDM ghosts");
+    report("TDM ghosts", &w, &s);
+    assert!(s.kinds[2] > 10, "players still shoot each other");
+}

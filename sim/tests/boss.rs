@@ -100,10 +100,11 @@ fn no_boss_in_elimination_or_war() {
 
 #[test]
 fn boss_spider_ffa() {
-    let (spawns, kills, pickups, _) = boss_run_seed(MODE_FFA, 64, 360, 2);
+    let (spawns, kills, pickups, _) = boss_run_seed(MODE_FFA, 64, 360, 3);
     println!("spider run: spawns {:?} kills {:?} dropped-BFG pickups {}", spawns, kills, pickups);
     assert_eq!(spawns[0].1, mt::SPIDER as i32);
     if let Some(k) = kills.first() {
         println!("  Spider Mastermind died after {:.1} s", (k.0 - spawns[0].0) as f64 / 35.0);
     }
 }
+

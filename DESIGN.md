@@ -159,6 +159,22 @@ BFG (spider or cyberdemon)" and "it should clearly indicate on room name saying 
   The CYBR/SPID sprites and DSCYB*/DSSPI*/DSHOOF/DSMETAL sounds ship in the base pak
   (FreeDM has them).
 
+### Slower movement, no player collision (requested 2026-10-03)
+
+The user: "players are moving tadbit too fast" and "add option for disabling collision for
+player units for certain rooms? especially the team game maps that have massive player
+counts? they seem to get stuck too often".
+
+- **Speed:** P_MovePlayer thrusts `cmd × 1741` instead of vanilla's `× 2048` (85%), for
+  humans and bots alike (bots drive the same ticcmd path). Top run speed ≈ 14.2 units/tic
+  instead of 16.7.
+- **No player collision:** a room modifier, `flags` bit 1 in `world_new_cfg`. Players
+  pass through each other (PIT_CheckThing ignores player vs player); missiles, hitscan,
+  monsters, pickups and telefrags are unchanged. On by default in War rooms; any room
+  name can turn it on with `ghost` / `ghosts` / `nocollide` (`na-tdm-ghost-1`) or off with
+  `solid` / `collide` (`my-war-solid`). Server rows show a "No collision" badge.
+- sim_version 7 (both changes alter the simulation).
+
 ### ABI additions (v2)
 
 ```

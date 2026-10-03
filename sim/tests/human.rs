@@ -47,7 +47,7 @@ fn human_slot_script() {
     let m = w.mo(h);
     let moved = (m.x - x0) >> 16;
     println!("walked {} units in 8 tics, momx {:.2}", moved, m.momx as f64 / 65536.0);
-    // vanilla: thrust 50*2048 per tic, friction 0xe800 -> 1.5625, 2.98, ... units/tic
+    // thrust 50*1741 per tic (85% of vanilla's 2048), friction 0xe800 -> 1.33, 2.53, ... units/tic
     assert!(moved > 20 && moved < 80, "moved {}", moved);
     assert!(m.momx > 6 * FRACUNIT && m.momx < 17 * FRACUNIT);
     // stop (vanilla friction needs ~50 tics to get under STOPSPEED from this speed)

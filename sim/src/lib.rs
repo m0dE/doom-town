@@ -33,4 +33,4 @@ pub mod user;
 pub mod world;
 
 /// bump on any change to sim behaviour or layout
-pub const SIM_VERSION: u32 = 6;
+pub const SIM_VERSION: u32 = 7;

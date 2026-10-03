@@ -76,9 +76,10 @@ pub fn run_stats(w: &mut World, tics: u32) -> Stats {
     }
     all.sort();
     st.p99_us = all[all.len() * 99 / 100];
-    // everything inside the map?
+    // everything inside the map? (not blood and puffs: they're MF_NOBLOCKMAP, so a moving
+    // floor passes through them, as in vanilla's P_ChangeSector, for their last few tics)
     let map = w.map.clone();
-    for o in w.mobjs.iter().flatten() {
+    for o in w.mobjs.iter().flatten().filter(|o| o.flags & doomsim::info::MF_NOBLOCKMAP == 0) {
         let ss = map.point_in_subsector(o.x, o.y);
         let sec = &w.sectors[map.subsectors[ss].sector as usize];
         if o.z < sec.floorheight - 64 * 65536 || o.z > sec.ceilingheight + 64 * 65536 {

@@ -218,6 +218,9 @@ impl World {
             }
             return !solid;
         }
+        if self.g.cfg.ghost_players() && self.mo(t).player >= 0 && self.mo(tm).player >= 0 {
+            return true;
+        }
         tf & MF_SOLID == 0
     }
 

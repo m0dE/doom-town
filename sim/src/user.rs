@@ -12,6 +12,8 @@ use crate::world::*;
 
 pub const MAXBOB: Fixed = 0x100000;
 const ANG5: Angle = ANG90 / 18;
+/// thrust per ticcmd move unit; vanilla's 2048 felt a bit quick, this is 85% of it
+const MOVE_THRUST: Fixed = 1741;
 
 /// order used by next/previous weapon
 pub const WEAPON_CYCLE: [i32; 9] = [WP_FIST, WP_CHAINSAW, WP_PISTOL, WP_SHOTGUN, WP_SUPERSHOTGUN, WP_CHAINGUN, WP_MISSILE, WP_PLASMA, WP_BFG];
@@ -89,10 +91,10 @@ impl World {
         };
         self.players[slot].onground = onground;
         if cmd.forward != 0 && onground {
-            self.thrust(h, yaw, cmd.forward as i32 * 2048);
+            self.thrust(h, yaw, cmd.forward as i32 * MOVE_THRUST);
         }
         if cmd.side != 0 && onground {
-            self.thrust(h, yaw.wrapping_sub(ANG90), cmd.side as i32 * 2048);
+            self.thrust(h, yaw.wrapping_sub(ANG90), cmd.side as i32 * MOVE_THRUST);
         }
         // jump (not in vanilla): from the ground only, with a short cooldown after landing
         if onground {

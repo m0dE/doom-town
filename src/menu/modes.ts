@@ -10,6 +10,8 @@
  *   na-elim-1, cs-night       Elimination            (elim, elimination, cs, rounds)
  *   na-war-1, big-war         War, 100 v 100         (war, conquest)
  *   na-boss-1, na-tdm-boss-1  + Random bosses        (boss, bosses) - Deathmatch and TDM only
+ *   na-tdm-ghost-1            + No player collision  (ghost, ghosts, nocollide) - on by default in War
+ *   my-war-solid              - player collision     (solid, collide) - War rooms that want it back
  */
 import { ROTATIONS, type RotationKey } from '../sim/maps.js';
 
@@ -43,6 +45,8 @@ export const MODE_ORDER: readonly ModeKey[] = ['dm', 'tdm', 'elim', 'war'];
 export interface RoomGame {
   mode: ModeInfo;
   bosses: boolean;
+  /** players pass through each other (crowded rooms: nobody gets wedged in a doorway) */
+  ghosts: boolean;
   slots: number;
   rotation: readonly string[];
   /** "Team Deathmatch · Random bosses" */
@@ -57,11 +61,16 @@ const WORDS: Record<string, ModeKey> = {
   war: 'war', conquest: 'war',
 };
 
-export function gameFor(mode: ModeKey, bosses: boolean): RoomGame {
+/** War (100 v 100) rooms have no player collision unless the name says otherwise. */
+const GHOSTS_BY_DEFAULT: Record<ModeKey, boolean> = { dm: false, tdm: false, elim: false, war: true };
+
+export function gameFor(mode: ModeKey, bosses: boolean, ghosts: boolean = GHOSTS_BY_DEFAULT[mode]): RoomGame {
   const m = MODES[mode];
   const b = bosses && (mode === 'dm' || mode === 'tdm');
-  const kind = [mode === 'dm' ? '' : mode, b ? 'boss' : ''].filter(Boolean).join('-');
-  return { mode: m, bosses: b, slots: m.slots, rotation: ROTATIONS[m.rotation], label: b ? `${m.label} · Random bosses` : m.label, kind };
+  const g = ghosts !== GHOSTS_BY_DEFAULT[mode] ? (ghosts ? 'ghost' : 'solid') : '';
+  const kind = [mode === 'dm' ? '' : mode, b ? 'boss' : '', g].filter(Boolean).join('-');
+  const label = [m.label, b ? 'Random bosses' : '', g ? (ghosts ? 'No player collision' : 'Player collision') : ''].filter(Boolean).join(' · ');
+  return { mode: m, bosses: b, ghosts, slots: m.slots, rotation: ROTATIONS[m.rotation], label, kind };
 }
 
 /**
@@ -79,11 +88,14 @@ function rotationStart(name: string, length: number): number {
 export function roomGame(name: string): RoomGame {
   let mode: ModeKey = 'dm';
   let bosses = false;
+  let ghosts: boolean | undefined;
   for (const w of name.toLowerCase().split(/[-_\s]+/)) {
     if (WORDS[w] && mode === 'dm') mode = WORDS[w];
     if (w === 'boss' || w === 'bosses') bosses = true;
+    if (w === 'ghost' || w === 'ghosts' || w === 'nocollide') ghosts = true;
+    if (w === 'solid' || w === 'collide') ghosts = false;
   }
-  const g = gameFor(mode, bosses);
+  const g = gameFor(mode, bosses, ghosts);
   const k = rotationStart(name.toLowerCase(), g.rotation.length);
   return { ...g, rotation: [...g.rotation.slice(k), ...g.rotation.slice(0, k)] };
 }
@@ -102,7 +114,7 @@ export function cfgWords(g: RoomGame, mapIds: readonly number[], seed: number, o
     0,
     mapIds.length, ...mapIds,
     seed >>> 0,
-    g.bosses ? 1 : 0,
+    (g.bosses ? 1 : 0) | (g.ghosts ? 2 : 0),
   ]);
 }
 

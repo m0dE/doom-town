@@ -108,7 +108,7 @@ export class ServerBrowser {
     const fill = Math.round((r.players / r.capacity) * 100);
     return `
       <div class="srv-row" data-room="${esc(r.name)}" tabindex="0" role="button" aria-label="Join ${esc(r.name)}">
-        <span class="srv-name">${esc(r.name)}${r.game.bosses ? ' <em class="badge boss">Random bosses</em>' : ''}${r.game.mode.key !== 'dm' && this.tab === 'boss' ? ` <em class="badge">${esc(r.game.mode.short)}</em>` : ''}</span>
+        <span class="srv-name">${esc(r.name)}${r.game.bosses ? ' <em class="badge boss">Random bosses</em>' : ''}${r.game.ghosts ? ' <em class="badge">No collision</em>' : ''}${r.game.mode.key !== 'dm' && this.tab === 'boss' ? ` <em class="badge">${esc(r.game.mode.short)}</em>` : ''}</span>
         <span class="srv-map">${esc(mapTitle(r.map))}</span>
         <span class="srv-pop"><i style="--fill:${fill}%"></i><b>${r.players}</b> / ${r.capacity}</span>
         <span class="srv-age">${esc(formatAge(r.ageSeconds))}</span>

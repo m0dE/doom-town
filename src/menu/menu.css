@@ -67,7 +67,11 @@ input#name { width: 100%; padding: 6px 10px; text-align: center; border-radius: 
   background: transparent; border: 1px solid transparent; text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 90, 20, .35); }
 input#name:hover { border-color: rgba(255, 130, 70, .22); }
 input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
-.swatches { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 360px; margin-top: 4px; }
+.customize { position: relative; display: flex; flex-direction: column; align-items: center; margin-top: 4px; }
+.customize-pop { position: absolute; top: calc(100% + 8px); z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: max-content; max-width: min(360px, 92vw); padding: 12px; }
+.customize-pop[hidden] { display: none; }
+.swatches { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 336px; }
 .swatch { width: 24px; height: 24px; padding: 0; border-radius: 4px; border: 2px solid rgba(0, 0, 0, .7);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -2px 0 rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.6); transition: transform .1s; }
 .swatch:hover { transform: translateY(-2px); }
@@ -191,7 +195,7 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
   .hero { flex-direction: row; gap: 16px; justify-content: center; }
   .stage { width: min(38vw, 220px); }
   .ident { align-items: flex-start; }
-  .swatches { justify-content: flex-start; }
+  .customize { align-items: flex-start; }
   .srv-list { max-height: none; }
   .srv-cols, .srv-row { grid-template-columns: 1fr 1.1fr 64px 60px; }
   .srv-map, .srv-cols span:nth-child(2) { display: none; }
@@ -200,7 +204,7 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
   .hero { flex-direction: column; align-items: center; }
   .stage { width: 150px; }
   .ident { align-items: center; }
-  .swatches { justify-content: center; }
+  .customize { align-items: center; }
   .btn.primary { flex: 1; }
   .srv-cols, .srv-row { grid-template-columns: 1fr 64px 60px; }
   .srv-age, .srv-cols span:nth-child(4) { display: none; }

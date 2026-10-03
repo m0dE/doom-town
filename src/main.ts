@@ -93,6 +93,21 @@ swatches.addEventListener('click', (e) => {
   paintSwatches(c);
 });
 
+// The colours live behind a Customize button, in a popover under the marine.
+const customizeBtn = $('customize-btn');
+const customizePop = $('customize-pop');
+function showCustomize(open: boolean): void {
+  customizePop.hidden = !open;
+  customizeBtn.setAttribute('aria-expanded', String(open));
+}
+customizeBtn.addEventListener('click', () => showCustomize(customizePop.hidden));
+document.addEventListener('click', (e) => {
+  if (!customizePop.hidden && !(e.target as Element).closest('.customize')) showCustomize(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !customizePop.hidden) { showCustomize(false); customizeBtn.focus(); }
+});
+
 // The WAD paints the marine, the logo and the backdrop once it is here.
 void loadWad().then((wad) => {
   const gfx = new Gfx(wad);

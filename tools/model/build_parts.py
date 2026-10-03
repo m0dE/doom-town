@@ -161,6 +161,15 @@ def helm_band(bm, y0, y1, a0, a1, out=0.8, thick=1.0, segs=8):
     band(bm, (H['cx'], 0.0), H['rx'] * k + out, H['rz'] * k + out, y0, y1, a0, a1, segs=segs, thick=thick)
 
 
+def signed_volume(bm):
+    v = 0.0
+    for f in bm.faces:
+        vs = [x.co for x in f.verts]
+        for k in range(1, len(vs) - 1):
+            v += vs[0].dot(vs[k].cross(vs[k + 1])) / 6
+    return v
+
+
 def build(part):
     n, mn, mx = part['name'], part['min'], part['max']
     bm = bmesh.new()
@@ -271,6 +280,10 @@ def build(part):
         return None                                                      # effects keep their boxes
 
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    # recalc_face_normals can still leave a closed part inside-out (the ellipsoid's
+    # axis swap mirrors it; it flipped padR and not padL): outward means a positive volume
+    if signed_volume(bm) < 0:
+        bmesh.ops.reverse_faces(bm, faces=bm.faces)
     bmesh.ops.triangulate(bm, faces=bm.faces)
     bm.verts.index_update()
     p = [round(c, 3) for v in bm.verts for c in v.co]

@@ -22,15 +22,22 @@ import { guessMap, roomGame, type RoomGame } from './modes.js';
  * player signs in to - ONE id, because a session token is scoped to its app
  * and a node refuses it for another app's room.
  *
- * `freedoom-deathmatch` on cloud.arrr.fun: rooms tick at 35 Hz, sign-in open,
+ * `doom-town` on cloud.arrr.fun: rooms tick at 35 Hz, sign-in open,
  * signed-out players may play, every origin allowed. `VITE_ARRR_APP_ID` at
  * build time overrides it (a local cluster, a second environment).
  */
 export const DEFAULT_APP_ID = 'app_1791001468308_ac7590dffc2a';
 export const APP_ID = (import.meta.env?.VITE_ARRR_APP_ID ?? '').trim() || DEFAULT_APP_ID;
 
-/** Optional, not a secret (a key in a browser build is public). */
-export const API_KEY = (import.meta.env?.VITE_ARRR_API_KEY ?? '').trim() || undefined;
+/**
+ * The app's API key (console → doom-town → API key, "main"). Not a secret: the console
+ * says it ships in the client and is attribution, and a key in a browser build is public
+ * anyway. It goes only with the app it belongs to, so a build pointed at another app
+ * (a local cluster) sends none unless `VITE_ARRR_API_KEY` names one.
+ */
+const DEFAULT_API_KEY = 'arrr_b1cca897fa86e8ff56416f5e65b1a47f8ca42e59788b9861ae0f61b03c40951b';
+export const API_KEY = (import.meta.env?.VITE_ARRR_API_KEY ?? '').trim()
+  || (APP_ID === DEFAULT_APP_ID ? DEFAULT_API_KEY : undefined);
 
 const SUFFIX = `-${APP_NAME}`;
 

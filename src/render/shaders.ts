@@ -290,7 +290,10 @@ void main() {
   float v = 100.0 - tanE * uSkyStretch;
   vec2 t = atlasTexel(r, vec2(u, clamp(v, 0.0, r.w - 1.0)));
   vec3 c = palColor(floor(t.r * 255.0 + 0.5), 0.0);
-  c = mix(c, uSkyTop, smoothstep(0.0, 56.0, -v));
+  // Above the texture there is no more sky to show: clamping repeats its top row,
+  // which streaks. Blend into the sky's top colour starting inside the texture so
+  // the clamped rows are never seen on their own.
+  c = mix(c, uSkyTop, 1.0 - smoothstep(-6.0, 28.0, v));
   fragColor = vec4(c, 0.0);
 }
 `;

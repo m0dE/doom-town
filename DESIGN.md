@@ -49,7 +49,7 @@ games/doom/
 
 Build: `npm run build:sim` (cargo → `public/doomsim.wasm`, committed so the client builds
 without Rust), `npm run pak` (freedm.wad → `public/freedm-lite.wad`, committed),
-`npm run dev`, `npm run export` (→ `export/doom-town/` + zip, committed like vibe-strike).
+`npm run dev`, `npm run export` (→ `export/doom-town/` + zip; build output, gitignored — 30 MB per rebuild is too much history).
 
 ## Game rules
 

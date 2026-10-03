@@ -174,7 +174,7 @@ writeFileSync(path.join(OUT, 'BUILD.txt'), [
   '',
   `built from commit : ${head}${dirty ? ' (with uncommitted changes)' : ''}   (baked in as the build every other client must match)`,
   `app               : ${appId}   (rooms joined, and the app players sign in to)`,
-  `api key baked in  : ${process.env.VITE_ARRR_API_KEY ? 'yes (not a secret)' : 'no'}`,
+  `api key baked in  : ${process.env.VITE_ARRR_API_KEY ? 'yes, from VITE_ARRR_API_KEY (not a secret)' : appId === DEFAULT_APP_ID ? "yes, the doom-town app's (src/menu/rooms.ts; not a secret)" : 'no'}`,
   `site              : ${SLUG}/  ${files.length} files, ${bytes} bytes`,
   `zip               : ${SLUG}.zip  ${zipped} bytes`,
   `zip sha256        : ${sha256}`,

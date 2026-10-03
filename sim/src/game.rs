@@ -46,7 +46,7 @@ pub struct Config {
     pub rounds_to_win: u32,
     pub tickets: u32,
     pub friendly_fire: bool,
-    /// bit 0: random bosses (FFA and TDM only)
+    /// bit 0: random bosses (FFA and TDM only), bit 1: players pass through each other
     pub flags: u32,
 }
 
@@ -86,6 +86,10 @@ impl Config {
     }
     pub fn bosses(&self) -> bool {
         self.flags & 1 != 0 && (self.mode == MODE_FFA || self.mode == MODE_TDM)
+    }
+    /// players don't block each other (crowded rooms); monsters, missiles and pickups still hit
+    pub fn ghost_players(&self) -> bool {
+        self.flags & 2 != 0
     }
 }
 

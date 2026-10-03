@@ -9,7 +9,7 @@ full match, and a player who joins takes a bot's place.
 | Deathmatch | 64 | everyone for themselves, 10-minute matches, then the next map |
 | Team Deathmatch | 32 v 32 | red against blue, no friendly fire |
 | Elimination | 12 v 12 | Counter-Strike-style rounds, no respawns, first team to 7 |
-| War | 100 v 100 | five capture points and tickets on two huge generated maps |
+| War | 100 v 100 | five capture points and tickets on two huge generated maps; players pass through each other |
 | Random bosses | 64 | deathmatch where a Cyberdemon or Spider Mastermind shows up and drops a BFG |
 
 - **Simulation:** a Rust port of the Doom playsim (id Software's linuxdoom-1.10),

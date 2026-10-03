@@ -19,14 +19,18 @@
  * replays it; everything else off confirmed frames, once each.
  */
 import { lockstep, type IdentitySession } from 'arrr-network';
-import { loadSim, loadWad } from './assets.js';
+import { fetchMapArt, loadSim, loadWad, mapWad } from './assets.js';
 import { createDoomApp, encodeCmd, type DoomApp, type DoomState } from '../sim/doomsim.js';
 import {
   EVENT_WORDS, EV_MATCH_END, EV_MATCH_START, EV_OBITUARY, EV_PICKUP, EV_SOUND, EV_SWITCH,
+  EV_MAP_CHANGE, EV_ROUND_START, EV_ROUND_END, EV_POINT_CAPTURED, EV_TICKETS_LOW, EV_BOSS_SPAWN, EV_BOSS_KILLED,
+  MV, POINT_WORDS, PHASE_INTERMISSION, R_TEAM,
   MF_MISSILE, MOBJ_WORDS, M_ANGLE, M_FLAGS, M_ID, M_MOMX, M_MOMY, M_SPRITE, M_TYPE, M_X, M_Y, M_Z,
   PV, ROW_WORDS, R_DEATHS, R_FRAGS, R_HUMAN, R_COLOR,
 } from '../sim/abi.js';
-import { MAP_LUMP, MATCH_TICS, INTERMISSION_TICS, SLOTS, TICRATE } from '../sim/map.js';
+import { TICRATE } from '../sim/map.js';
+import { ROTATIONS, mapTitle } from '../sim/maps.js';
+import { cfgWords, roomGame, type CfgOverrides, type RoomGame } from '../menu/modes.js';
 import { NetSession } from '../net/session.js';
 import { APP_ID, API_KEY } from '../menu/rooms.js';
 import { Input, MAX_PITCH } from '../input/input.js';
@@ -38,8 +42,8 @@ import { obituaryTemplate, pickupMessage } from '../hud/strings.js';
 import { botColor, clampColor, PLAYER_COLORS } from './colors.js';
 import { botNames, botPing } from './names.js';
 import { GameSound, type SoundOut } from './sound.js';
-import { AutomapView, type WorldView } from './automap.js';
 import { Renderer } from '../render/index.js';
+import { MapView, type WarmView } from './view.js';
 import { PauseMenu } from './pause.js';
 import { ModelBodies, bodyDebug } from './bodies.js';
 import { prefs, savePrefs, cleanName } from '../menu/prefs.js';
@@ -72,7 +76,16 @@ export interface GameOptions {
   nodeUrl?: string;
   host: HTMLElement;
   hud: HTMLElement;
+  /** timing overrides for the world config (tests; honoured offline only) */
+  overrides?: CfgOverrides;
 }
+
+/** mobjtype_t of the two bosses (DESIGN.md "Random bosses"). */
+const MT_SPIDER = 19, MT_CYBORG = 21;
+export const bossName = (type: number): string => (type === MT_SPIDER ? 'Spider Mastermind' : type === MT_CYBORG ? 'Cyberdemon' : 'demon');
+/** Team colours: indices into PLAYER_COLORS (red, blue). */
+const TEAM_COLOR = [3, 4];
+const TEAM_NAME = ['Red', 'Blue'];
 
 /** One confirmed frame, as the loop keeps it. */
 interface Snap {
@@ -81,6 +94,8 @@ interface Snap {
   sectors: Int32Array;
   /** Our PlayerView, when we have a slot. */
   me: Int32Array | null;
+  /** world_view_match */
+  match: Int32Array;
   mySlot: number;
   ids: string[];
   /** id → index into `mobjs`, built on first use. */
@@ -116,8 +131,8 @@ function playerId(identity?: IdentitySession): string {
 }
 
 /** A frame that touches every material: the world, a marine, a weapon. */
-function warmupFrame(wad: Wad): RenderFrame {
-  const map = parseMap(MAP_LUMP, wad.mapLumps(MAP_LUMP));
+function warmupFrame(wad: Wad, mapName: string): RenderFrame {
+  const map = parseMap(mapName, wad.mapLumps(mapName));
   const start = map.things.find((t) => t.type === 1) ?? map.things[0] ?? { x: 0, y: 0, angle: 0 };
   const play = SPRITE_NAMES.indexOf('PLAY'), pisg = SPRITE_NAMES.indexOf('PISG');
   return {
@@ -133,7 +148,9 @@ function warmupFrame(wad: Wad): RenderFrame {
 }
 
 /** A renderer built while the menu is up, so Play does not wait on the atlas and the shaders. */
-let warm: { canvas: HTMLCanvasElement; renderer: Renderer } | null = null;
+let warm: WarmView | null = null;
+/** The map the start screen prewarms: Quick Play's (the deathmatch rotation's first). */
+const WARM_MAP = ROTATIONS.deathmatch[0];
 
 const EMPTY = new Int32Array(0);
 
@@ -157,13 +174,13 @@ export class Game {
     canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
     const t0 = performance.now();
     try {
-      const renderer = new Renderer(canvas, wad, MAP_LUMP, { fov: prefs().fov });
+      const renderer = new Renderer(canvas, wad, WARM_MAP, { fov: prefs().fov });
       // the 3D marines too: their factory and shader are part of the first frame
       if (prefs().players === '3d') renderer.setPlayerBodyRenderer(new ModelBodies(wad));
       // One frame now compiles every shader, which is otherwise the first frame of the match.
-      renderer.setFrame(warmupFrame(wad));
+      renderer.setFrame(warmupFrame(wad, WARM_MAP));
       renderer.render();
-      warm = { canvas, renderer };
+      warm = { canvas, renderer, map: WARM_MAP };
     } catch { warm = null; }
     console.info(`[render] 3D view ready in ${Math.round(performance.now() - t0)} ms`);
   }
@@ -176,7 +193,10 @@ export class Game {
   private readonly input: Input;
   private readonly hud: Hud;
   private readonly sound: SoundOut;
-  private view: WorldView;
+  private view: MapView;
+  /** the map whose view is being built, and the next map whose art was fetched */
+  private mapLoading = '';
+  private prefetched = '';
   private readonly pause: PauseMenu;
 
   private readonly confirmed = new TicRing<Snap>(96);
@@ -226,9 +246,13 @@ export class Game {
 
   static async start(opts: GameOptions, progress: (label: string, frac: number) => void): Promise<Game> {
     progress('Loading', 0.1);
-    const [wad, sim] = await Promise.all([loadWad(), loadSim()]);
+    const game = roomGame(opts.room);
+    const [wad, sim] = await Promise.all([loadWad(), loadSim(game.mode.rotation, (i, n) => progress(`Loading maps ${i}/${n}`, 0.1 + 0.5 * (i / n)))]);
     progress('Connecting', 0.6);
-    const g = new Game(opts, wad, createDoomApp(sim));
+    const mapIds = game.rotation.map((m) => sim.mapIds.get(m)!);
+    const overrides = opts.offline ? opts.overrides : undefined;
+    const app = createDoomApp(sim, { slots: game.slots, cfg: (seed) => cfgWords(game, mapIds, seed, overrides) });
+    const g = new Game(opts, wad, app, game);
     try {
       await g.net.start();
     } catch (err) {
@@ -240,17 +264,17 @@ export class Game {
     return g;
   }
 
-  private constructor(private readonly opts: GameOptions, private readonly wad: Wad, app: DoomApp) {
+  private constructor(private readonly opts: GameOptions, private readonly wad: Wad, app: DoomApp, readonly game: RoomGame) {
     this.app = app;
     this.id = playerId(opts.identity);
     this.names.set(this.id, opts.name);
     this.colors.set(this.id, clampColor(opts.color));
-    this.bots = botNames(opts.room, SLOTS);
+    this.bots = botNames(opts.room, game.slots);
     const gfx = new Gfx(wad);
     const p = prefs();
 
     // the world view: three.js, or the automap where WebGL will not start
-    this.view = this.makeView(wad, app, p.fov);
+    this.view = this.makeView(wad, p.fov);
     opts.host.append(this.view.canvas);
     this.resize();
     addEventListener('resize', this.resize);
@@ -333,6 +357,7 @@ export class Game {
       rows: sim.players(s.h),
       sectors: sim.sectors(s.h),
       me: slot >= 0 ? sim.player(s.h, slot) : null,
+      match: sim.match(s.h),
       mySlot: slot,
       ids: s.ids.slice(),
     };
@@ -348,7 +373,7 @@ export class Game {
     const live = !this.net.lockstep.catchup.active;
     for (let i = 0; i < ev.length; i += EVENT_WORDS) {
       const kind = ev[i];
-      if (kind === EV_SWITCH) switched = true;
+      if (kind === EV_SWITCH || kind === EV_MAP_CHANGE) switched = true;
       if (!live) continue;
       this.pushEvent(ev, i);
       this.confirmedEvent(ev, i, snap);
@@ -377,7 +402,9 @@ export class Game {
 
   /** Missiles new in `mobjs` (not in `prev`) that spawned at our body: ours. */
   private claimMissiles(mobjs: Int32Array, prev: Int32Array | null, me: Int32Array): void {
-    if (!prev || me[PV.state] !== 0) return;
+    // only while we hold a weapon that fires one (wp_missile 4, wp_plasma 5, wp_bfg 6):
+    // a rival firing beside us is then never mistaken for us
+    if (!prev || me[PV.state] !== 0 || me[PV.ready] < 4 || me[PV.ready] > 6) return;
     const n = mobjs.length / MOBJ_WORDS;
     for (let i = 0; i < n; i++) {
       const o = i * MOBJ_WORDS;
@@ -489,6 +516,10 @@ export class Game {
   }
 
   private slotColor(slot: number, snap: Snap): number {
+    if (this.game.mode.teams) {
+      const team = snap.rows[slot * ROW_WORDS + R_TEAM];
+      if (team === 0 || team === 1) return TEAM_COLOR[team];
+    }
     const id = snap.ids[slot];
     if (id) return this.colors.get(id) ?? clampColor(snap.rows[slot * ROW_WORDS + R_COLOR]);
     return botColor(slot);
@@ -534,7 +565,7 @@ export class Game {
     const t = renderTimes(v);
     const snapPair = t ? this.confirmed.pair(t.others) : null;
     if (!t || !snapPair) {
-      this.hud.update({ pv: null, face: 0, color: 0, frags: 0, rank: 0, total: SLOTS, timeLeft: 0, intermission: false, dead: false, respawnReady: false, killer: null, locked: this.input.locked, style: prefs().hud, net: this.net.statusText === 'Connected' || this.net.statusText === 'Offline' ? 'Joining…' : this.net.statusText }, now);
+      this.hud.update({ pv: null, face: 0, color: 0, frags: 0, rank: 0, total: this.game.slots, timeLeft: 0, intermission: false, dead: false, respawnReady: false, killer: null, locked: this.input.locked, style: prefs().hud, net: this.net.statusText === 'Connected' || this.net.statusText === 'Offline' ? 'Joining…' : this.net.statusText }, now);
       return;
     }
     const { a, b, frac } = snapPair;
@@ -621,7 +652,9 @@ export class Game {
     this.sound.frame(cam.x, cam.y, cam.yaw, this.mobjPool, count);
     this.view.hudHeight(prefs().hud === 'bar' && f.player ? this.hud.barHeight : 0);
     const r0 = performance.now();
-    this.view.render(f);
+    this.followMap(b);
+    // draw only once the view shows the map the world is on
+    if (this.view.ready && this.view.map === this.app.sim.mapName(b.match[MV.map])) this.view.render(f);
     this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
 
     // --- HUD
@@ -707,11 +740,10 @@ export class Game {
       this.hud.setRows(list);
     }
 
-    const mt = pv ? pv[PV.matchTic] : 0;
-    const inter = !!pv && pv[PV.matchPhase] === 1;
-    const timeLeft = inter
-      ? (INTERMISSION_TICS - (mt >= MATCH_TICS ? mt - MATCH_TICS : mt)) / TICRATE
-      : (MATCH_TICS - mt) / TICRATE;
+    // The sim says which phase the match is in and how long that phase has left,
+    // whatever the room's mode and timings are.
+    const inter = snap.match[MV.phase] === PHASE_INTERMISSION;
+    const timeLeft = Math.max(0, snap.match[MV.phaseLeft]) / TICRATE;
     const st = this.net.statusText;
     this.hud.update({
       pv, face: this.face.index, color: this.colors.get(this.id) ?? 0,
@@ -778,39 +810,30 @@ export class Game {
     });
   }
 
-  private makeView(wad: Wad, app: DoomApp, fov: number): WorldView {
+  private makeView(wad: Wad, fov: number): MapView {
     const pre = warm;
     warm = null;
-    const canvas = pre?.canvas ?? document.createElement('canvas');
-    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
-    try {
-      const r = pre?.renderer ?? new Renderer(canvas, wad, MAP_LUMP, { fov });
-      if (pre) r.setOptions({ fov });
-      r.setSimNameTables(app.sim.textureNames, app.sim.flatNames);
-      let players: '3d' | 'sprites' | null = null;
-      const setPlayers = (mode: '3d' | 'sprites'): void => {
-        if (mode === players) return;
-        players = mode;
-        r.setPlayerBodyRenderer(mode === '3d' ? (r.playerBodyRenderer ?? new ModelBodies(wad)) : null);
-      };
-      setPlayers(prefs().players);
-      return {
-        setPlayers,
-        stats: () => {
-          const b = r.playerBodyRenderer as ModelBodies | null;
-          return { ...r.stats, bodies3d: b?.count ?? 0, posed3d: b?.posed ?? 0 };
-        },
-        canvas,
-        render: (f) => { r.setFrame(f); r.render(); },
-        resize: () => { /* the renderer follows its canvas */ },
-        hudHeight: (px) => r.setHudHeightPx(px),
-        setFov: (deg) => r.setOptions({ fov: deg }),
-        dispose: () => { r.dispose(); canvas.remove(); },
-      };
-    } catch (err) {
-      console.warn('[render] no 3D view, drawing the automap instead:', err);
-      return new AutomapView(parseMap(MAP_LUMP, wad.mapLumps(MAP_LUMP)));
+    const v = new MapView(fov, wad, pre);
+    v.setPlayers(prefs().players);
+    return v;
+  }
+
+  /** The map the world is on (confirmed); the view follows it, building the map's art off the critical path. */
+  private followMap(snap: Snap): void {
+    const sim = this.app.sim;
+    const want = sim.mapName(snap.match[MV.map]);
+    if (want && want !== this.view.map && this.mapLoading !== want) {
+      const id = snap.match[MV.map];
+      this.mapLoading = want;
+      void mapWad(want).then((w) => {
+        if (this.disposed || this.mapLoading !== want) return;
+        this.view.setMap(want, w, sim.nameTables(id));
+        this.mapLoading = '';
+      }).catch((err) => { console.error(err); this.mapLoading = ''; });
     }
+    // the next map's art, while this one is played
+    const next = sim.mapName(snap.match[MV.nextMap]);
+    if (next && next !== want && next !== this.prefetched) { this.prefetched = next; void fetchMapArt(next); }
   }
 
   private readonly resize = (): void => {

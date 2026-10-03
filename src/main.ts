@@ -20,7 +20,7 @@ import { ServerBrowser, esc } from './menu/serverbrowser.js';
 import { Account, type AccountState } from './menu/account.js';
 import { cleanRoomName } from './menu/rooms.js';
 import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
-import { MAP_TITLE } from './sim/map.js';
+import { ALL_MAPS } from './sim/maps.js';
 import type { Game } from './game/game.js';
 
 declare const __BUILD_REV__: string;
@@ -37,7 +37,7 @@ const loading = $('loading');
 const loadingBar = $('loading-bar');
 const loadingLabel = $('loading-label');
 
-$('map-title').textContent = MAP_TITLE;
+$('map-title').textContent = `${ALL_MAPS.length} maps`;
 
 // The title: our own lettering, at a whole-number pixel scale that fits the column.
 const logo = $<HTMLCanvasElement>('logo');
@@ -132,9 +132,13 @@ account.start();
 
 // ------------------------------------------------------------------ servers
 
-const browser = new ServerBrowser($('rooms'), $('rooms-status'), $<HTMLButtonElement>('quickplay'), central);
+const browser = new ServerBrowser($('rooms'), $('rooms-status'), $<HTMLButtonElement>('quickplay'), central, $('mode-tabs'));
 browser.onJoin = (room) => void play(room, false);
-$('offline').addEventListener('click', () => void play('practice', true));
+const offlineMode = $<HTMLSelectElement>('offline-mode');
+$('offline').addEventListener('click', () => {
+  const kind = offlineMode.value;
+  void play(kind ? `practice-${kind}` : 'practice', true);
+});
 $<HTMLFormElement>('custom').addEventListener('submit', (e) => {
   e.preventDefault();
   const room = cleanRoomName(roomIn.value);

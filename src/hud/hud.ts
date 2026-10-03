@@ -35,7 +35,41 @@ export interface HudState {
   style: 'bar' | 'full';
   /** A network line ("Reconnecting") or null. */
   net: string | null;
+  /** The room's game (modes, rounds, capture points, bosses). */
+  mode?: ModeHud;
 }
+
+/** What the HUD shows of the match (world_view_match, read by the game). */
+export interface ModeHud {
+  /** sim mode id: 0 deathmatch, 1 team deathmatch, 2 elimination, 3 war */
+  mode: number;
+  label: string;
+  teams: boolean;
+  /** 0 play, 1 round freeze, 2 round over, 3 intermission */
+  phase: number;
+  /** seconds left in the phase */
+  phaseLeft: number;
+  round: number;
+  /** team frags (TDM), rounds won (elimination), tickets (war) */
+  score: [number, number];
+  alive: [number, number];
+  /** our team, -1 none */
+  myTeam: number;
+  /** war capture points: owner -1/0/1, progress -100 (red) .. 100 (blue) */
+  points: { owner: number; progress: number }[];
+  boss: { name: string; health: number; max: number } | null;
+  /** intermission headline, e.g. "RED TEAM WINS" */
+  winner: string | null;
+  mapTitle: string;
+  nextMapTitle: string;
+  /** elimination: who we are watching while dead */
+  spectating: string | null;
+  /** war, while dead: what each weapon key spawns at ("1 BASE", "2 POINT A", ...) */
+  spawnChoices: string[] | null;
+}
+
+export const TEAM_CSS = ['#ff4a3a', '#5a7bff'];
+const POINT_NAMES = 'ABCDEFGH';
 
 const RED = undefined;
 const GOLD = '#ffd25a';
@@ -59,7 +93,7 @@ export class Hud {
     this.font = new DoomFont(gfx);
     this.bar = new StatusBar(gfx);
     host.innerHTML = '';
-    for (const c of ['msgs', 'feed', 'top', 'cross', 'center', 'bar', 'full', 'scores', 'net']) {
+    for (const c of ['msgs', 'feed', 'top', 'points', 'boss', 'cross', 'banner', 'center', 'bar', 'full', 'scores', 'net']) {
       const d = document.createElement('div');
       d.className = `h-${c}`;
       host.append(d);
@@ -67,6 +101,7 @@ export class Hud {
     }
     this.el.bar.append(this.bar.canvas);
     this.el.scores.hidden = true;
+    this.el.boss.hidden = true;
     this.el.net.hidden = true;
     this.paintBarFill();
     this.resize();
@@ -117,6 +152,19 @@ export class Hud {
   }
 
   // ------------------------------------------------------------------ transient lines
+
+  /** A big line across the middle of the screen (a boss arrives, a round is won), `ms` long. */
+  banner(text: string, tint?: string, ms = 4000): void {
+    const b = this.el.banner;
+    b.innerHTML = '';
+    const d = this.text(text, tint ?? GOLD, this.k + 1);
+    b.append(d);
+    clearTimeout(this.bannerTimer);
+    this.bannerTimer = setTimeout(() => { b.innerHTML = ''; }, ms);
+  }
+  private bannerTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastPoints = '';
+  private lastBoss = '';
 
   /** A pickup or system message (Doom's top-left line), 4 s. */
   message(text: string, tint?: string): void { this.push(this.el.msgs, this.line([[text, tint ?? RED]]), 4000, 4); }
@@ -185,19 +233,33 @@ export class Hud {
     // frags, rank, clock
     const mm = Math.floor(Math.max(0, s.timeLeft) / 60), ss = Math.floor(Math.max(0, s.timeLeft) % 60);
     const clock = `${mm}:${String(ss).padStart(2, '0')}`;
-    const top = `${s.frags}|${s.rank}|${s.total}|${clock}|${s.intermission}|${this.k}`;
+    const m = s.mode;
+    const top = `${s.frags}|${s.rank}|${s.total}|${clock}|${s.intermission}|${this.k}|${m ? `${m.score}|${m.round}|${m.alive}|${m.phase}` : ''}`;
     if (top !== this.lastTop) {
       this.lastTop = top;
       const t = this.el.top;
       t.innerHTML = '';
-      t.append(this.line([['FRAGS ', GREY], [String(s.frags), GOLD]]));
-      if (s.rank > 0) t.append(this.line([[ordinal(s.rank).toUpperCase(), WHITE], [` OF ${s.total}`, GREY]]));
+      if (m && m.teams) {
+        if (m.mode === 2) t.append(this.line([['ROUND ', GREY], [String(Math.max(1, m.round)), WHITE]]));
+        const unit = m.mode === 3 ? ' TICKETS' : '';
+        t.append(this.line([['RED ', TEAM_CSS[0]], [String(m.score[0]), WHITE], ['  BLUE ', TEAM_CSS[1]], [String(m.score[1]), WHITE], [unit, GREY]]));
+        if (m.mode === 2) t.append(this.line([['ALIVE ', GREY], [String(m.alive[0]), TEAM_CSS[0]], [' V ', GREY], [String(m.alive[1]), TEAM_CSS[1]]]));
+        else t.append(this.line([['FRAGS ', GREY], [String(s.frags), GOLD]]));
+      } else {
+        t.append(this.line([['FRAGS ', GREY], [String(s.frags), GOLD]]));
+        if (s.rank > 0) t.append(this.line([[ordinal(s.rank).toUpperCase(), WHITE], [` OF ${s.total}`, GREY]]));
+      }
       t.append(this.line([[s.intermission ? 'NEXT ' : '', GREY], [clock, s.timeLeft < 30 && !s.intermission ? RED : WHITE]]));
     }
+    this.drawPoints(m);
+    this.drawBoss(m);
 
     // center prompts
     let center = '';
     if (!s.locked && !s.intermission) center = 'click';
+    else if (m && m.mode === 2 && m.phase === 1) center = `freeze|${m.round}|${Math.ceil(m.phaseLeft)}`;
+    else if (s.dead && m?.spectating) center = `spec|${m.spectating}`;
+    else if (s.dead && m?.spawnChoices) center = `spawn|${m.spawnChoices.join(',')}|${s.killer ?? ''}`;
     else if (s.dead) center = `dead|${s.killer ?? ''}|${s.respawnReady}`;
     const centerKey = `${center}|${this.k}`;
     if (centerKey !== this.lastCenter) {
@@ -207,6 +269,17 @@ export class Hud {
       if (center === 'click') {
         c.append(this.text('CLICK TO PLAY', WHITE, this.k + 1));
         c.append(this.text('ESC FOR THE MENU', GREY));
+      } else if (center.startsWith('freeze') && m) {
+        c.append(this.text(`ROUND ${Math.max(1, m.round)}`, GOLD, this.k + 2));
+        c.append(this.text(`FIGHT IN ${Math.ceil(m.phaseLeft)}`, WHITE, this.k + 1));
+      } else if (center.startsWith('spec') && m) {
+        c.append(this.text('YOU ARE OUT THIS ROUND', RED, this.k + 1));
+        c.append(this.line([['SPECTATING ', GREY], [m.spectating ?? '', WHITE]]));
+        c.append(this.text('FIRE TO WATCH SOMEONE ELSE', GREY));
+      } else if (center.startsWith('spawn') && m?.spawnChoices) {
+        if (s.killer) c.append(this.line([['FRAGGED BY ', RED], [s.killer, WHITE]], this.k + 1));
+        c.append(this.text('CHOOSE WHERE TO RESPAWN', GOLD, this.k));
+        c.append(this.text(m.spawnChoices.join('   '), WHITE, this.k));
       } else if (s.dead) {
         if (s.killer) c.append(this.line([['FRAGGED BY ', RED], [s.killer, WHITE]], this.k + 1));
         if (s.respawnReady) c.append(this.text('PRESS FIRE TO RESPAWN', GOLD, this.k));
@@ -275,9 +348,18 @@ export class Hud {
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'title';
-    title.append(this.text(s.intermission ? 'MATCH OVER' : 'DEATHMATCH', s.intermission ? GOLD : RED, this.k));
+    const m = s.mode;
+    title.append(this.text(s.intermission ? (m?.winner ?? 'MATCH OVER') : (m?.label ?? 'DEATHMATCH').toUpperCase(), s.intermission ? GOLD : RED, this.k));
+    if (m?.teams) title.append(this.line([['RED ', TEAM_CSS[0]], [String(m.score[0]), WHITE], ['  BLUE ', TEAM_CSS[1]], [String(m.score[1]), WHITE]], this.k));
     title.append(this.text(`${this.rows.length} PLAYERS`, GREY, this.k));
     box.append(title);
+    if (m) {
+      const sub = document.createElement('div');
+      sub.className = 'title sub';
+      sub.append(this.text(m.mapTitle.toUpperCase(), GREY, Math.max(1, this.k - 1)));
+      if (s.intermission) sub.append(this.line([['NEXT: ', GREY], [m.nextMapTitle.toUpperCase(), GOLD]], Math.max(1, this.k - 1)));
+      box.append(sub);
+    }
     const head = document.createElement('div');
     head.className = 'row';
     for (const [t, r] of [['#', false], ['NAME', false], ['FRAGS', true], ['DEATHS', true], ['PING', true]] as const) {
@@ -309,7 +391,52 @@ export class Hud {
     }
   }
 
+  /** War: the capture points, a letter each in its owner's colour, with the capture progress under it. */
+  private drawPoints(m: ModeHud | undefined): void {
+    const box = this.el.points;
+    const pts = m && m.mode === 3 ? m.points : [];
+    const key = `${pts.map((p) => `${p.owner}:${Math.round(p.progress / 10)}`).join(',')}|${this.k}`;
+    box.hidden = !pts.length;
+    if (key === this.lastPoints) return;
+    this.lastPoints = key;
+    box.innerHTML = '';
+    pts.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'pt';
+      d.style.borderColor = p.owner >= 0 ? TEAM_CSS[p.owner] : 'rgba(255,255,255,.35)';
+      d.style.background = p.owner >= 0 ? `${TEAM_CSS[p.owner]}55` : 'rgba(0,0,0,.45)';
+      d.append(this.text(POINT_NAMES[i] ?? '?', p.owner >= 0 ? WHITE : GREY));
+      const bar = document.createElement('i');
+      const toward = p.progress < 0 ? 0 : 1;
+      bar.style.width = `${Math.abs(p.progress)}%`;
+      bar.style.background = TEAM_CSS[toward];
+      d.append(bar);
+      box.append(d);
+    });
+  }
+
+  /** Random bosses: the boss's name and a health bar, while one lives. */
+  private drawBoss(m: ModeHud | undefined): void {
+    const b = m?.boss ?? null;
+    const box = this.el.boss;
+    box.hidden = !b;
+    if (!b) { this.lastBoss = ''; return; }
+    const pct = Math.max(0, Math.min(100, (b.health / Math.max(1, b.max)) * 100));
+    const key = `${b.name}|${Math.round(pct)}|${this.k}`;
+    if (key === this.lastBoss) return;
+    this.lastBoss = key;
+    box.innerHTML = '';
+    box.append(this.text(b.name.toUpperCase(), RED, this.k));
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const fill = document.createElement('i');
+    fill.style.width = `${pct}%`;
+    bar.append(fill);
+    box.append(bar);
+  }
+
   dispose(): void {
+    clearTimeout(this.bannerTimer);
     removeEventListener('resize', this.resize);
     this.host.innerHTML = '';
   }

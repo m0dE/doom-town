@@ -16,9 +16,9 @@
 import type { lockstep } from 'arrr-network';
 import {
   instantiateSim, copyCounted, copyI32, readNames,
-  type DoomSimExports, EVENT_WORDS, MOBJ_WORDS, PLAYER_WORDS, PV, ROW_WORDS,
+  type DoomSimExports, BOSS_WORDS, EVENT_WORDS, MOBJ_WORDS, PLAYER_WORDS, POINT_WORDS, PV, ROW_WORDS,
 } from './abi.js';
-import { MAP_LUMP, SLOTS, TICRATE } from './map.js';
+import { SLOTS, TICRATE } from './map.js';
 
 declare const __BUILD_REV__: string;
 
@@ -45,40 +45,75 @@ interface Source { sim: DoomSim; h: number; tic: number; hash: number; bytes: Ui
 
 const EMPTY = new Int32Array(0);
 
-/** One loaded module + map. Many worlds may live in it at once (confirmed, predicted, test peers). */
+/**
+ * One instantiated module with the maps of one rotation loaded, in rotation order
+ * (so every client gives each map the same id). Many worlds may live in it at once
+ * (confirmed, predicted, test peers).
+ */
 export class DoomSim {
   readonly spriteNames: string[];
   readonly soundNames: string[];
-  readonly textureNames: string[];
-  readonly flatNames: string[];
   readonly version: number;
+  /** map lump name → the sim's map id, in load order */
+  readonly mapIds: ReadonlyMap<string, number>;
+  private readonly mapNames = new Map<number, string>();
+  private readonly names = new Map<number, { textures: string[]; flats: string[] }>();
   /** Worlds alive in this module, so a stale handle is never cloned. */
   private readonly live = new Set<number>();
 
-  private constructor(readonly ex: DoomSimExports, readonly mapId: number) {
+  private constructor(readonly ex: DoomSimExports, ids: Map<string, number>) {
     this.spriteNames = readNames(ex, ex.sim_sprite_names());
     this.soundNames = readNames(ex, ex.sim_sound_names());
-    this.textureNames = readNames(ex, ex.world_map_texture_names(mapId));
-    this.flatNames = readNames(ex, ex.world_map_flat_names(mapId));
     this.version = ex.sim_version() >>> 0;
+    this.mapIds = ids;
+    for (const [n, id] of ids) this.mapNames.set(id, n);
   }
 
-  /** Instantiate the wasm and load one map (a PWAD from `mapPwad`). */
-  static async create(wasm: Parameters<typeof instantiateSim>[0], pwad: Uint8Array, map = MAP_LUMP): Promise<DoomSim> {
+  /**
+   * Instantiate the wasm and load maps (PWADs from `mapPwad`), in the order given.
+   * `onMap` reports progress (map_load builds the bots' navigation: big maps take a moment).
+   */
+  static async create(wasm: Parameters<typeof instantiateSim>[0], maps: { name: string; pwad: Uint8Array }[], onMap?: (i: number, n: number) => void): Promise<DoomSim> {
     const ex = await instantiateSim(wasm);
-    const ptr = ex.alloc(pwad.length);
-    new Uint8Array(ex.memory.buffer, ptr, pwad.length).set(pwad);
-    const id = ex.map_load(ptr, pwad.length);
-    ex.dealloc(ptr, pwad.length);
-    if (id < 0) throw new Error(`the sim refused ${map} (error ${id})`);
-    return new DoomSim(ex, id);
+    const ids = new Map<string, number>();
+    for (let i = 0; i < maps.length; i++) {
+      const { name, pwad } = maps[i];
+      const ptr = ex.alloc(pwad.length);
+      new Uint8Array(ex.memory.buffer, ptr, pwad.length).set(pwad);
+      const id = ex.map_load(ptr, pwad.length);
+      ex.dealloc(ptr, pwad.length);
+      if (id < 0) throw new Error(`the sim refused ${name} (error ${id})`);
+      ids.set(name, id);
+      onMap?.(i + 1, maps.length);
+      // let the page breathe between maps
+      if (i + 1 < maps.length) await new Promise((r) => setTimeout(r, 0));
+    }
+    return new DoomSim(ex, ids);
+  }
+
+  mapName(id: number): string { return this.mapNames.get(id) ?? ''; }
+
+  /** The sim's texture / flat name tables of a map (what world_view_lines/sectors index). */
+  nameTables(mapId: number): { textures: string[]; flats: string[] } {
+    let t = this.names.get(mapId);
+    if (!t) {
+      t = { textures: readNames(this.ex, this.ex.world_map_texture_names(mapId)), flats: readNames(this.ex, this.ex.world_map_flat_names(mapId)) };
+      this.names.set(mapId, t);
+    }
+    return t;
   }
 
   // ------------------------------------------------------------------ worlds
 
-  newWorld(seed: number, slots = SLOTS): number {
-    const h = this.ex.world_new(this.mapId, seed >>> 0, slots);
-    if (h <= 0) throw new Error(`world_new failed (${h})`);
+  /** A world from world_new_cfg words (src/menu/modes.ts cfgWords). */
+  newWorld(cfg: Uint32Array): number {
+    const bytes = cfg.byteLength;
+    const ptr = this.ex.alloc(bytes + 4);
+    const at = (ptr + 3) & ~3; // u32-aligned
+    new Uint32Array(this.ex.memory.buffer, at, cfg.length).set(cfg);
+    const h = this.ex.world_new_cfg(at, bytes);
+    this.ex.dealloc(ptr, bytes + 4);
+    if (h <= 0) throw new Error(`world_new_cfg failed (${h})`);
     this.live.add(h);
     return h;
   }
@@ -129,7 +164,13 @@ export class DoomSim {
   mobjs(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_mobjs(h), MOBJ_WORDS); }
   /** One PlayerView (PLAYER_WORDS = 51 words in v2). */
   player(h: number, slot: number): Int32Array { return copyI32(this.ex, this.ex.world_view_player(h, slot), PLAYER_WORDS); }
-  /** count(=slots) × 8 words (PlayerRow). */
+  /** world_view_match: 13 words, POINT_WORDS per capture point, BOSS_WORDS boss words. */
+  match(h: number): Int32Array {
+    const ptr = this.ex.world_view_match(h);
+    const n = new Int32Array(this.ex.memory.buffer, ptr, 13)[12];
+    return copyI32(this.ex, ptr, 13 + Math.max(0, n) * POINT_WORDS + BOSS_WORDS);
+  }
+  /** count(=slots) × 9 words (PlayerRow). */
   players(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_players(h), ROW_WORDS); }
   /** count × 5 words: floor, ceil, light, floorpic, ceilpic. */
   sectors(h: number): Int32Array { return copyCounted(this.ex, this.ex.world_view_sectors(h), 5); }
@@ -211,7 +252,11 @@ export function ticsPerFrameFor(fps: number): number {
   return Math.max(1, Math.round(TICRATE / Math.max(1, fps)));
 }
 
-export function createDoomApp(sim: DoomSim, opts: { slots?: number; rev?: string } = {}): DoomApp {
+/**
+ * The lockstep app over one DoomSim. `cfg(seed)` gives the world_new_cfg words of the
+ * room (the same on every client: a pure function of the room name and the seed).
+ */
+export function createDoomApp(sim: DoomSim, opts: { slots?: number; rev?: string; cfg: (seed: number) => Uint32Array }): DoomApp {
   const slots = opts.slots ?? SLOTS;
   const rev = opts.rev ?? (typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev');
   const stats = { clones: 0, decodes: 0, encodes: 0 };
@@ -228,7 +273,7 @@ export function createDoomApp(sim: DoomSim, opts: { slots?: number; rev?: string
     slotOf,
 
     init(ctx) {
-      const h = sim.newWorld(ctx.seed, slots);
+      const h = sim.newWorld(opts.cfg(ctx.seed));
       const s: DoomState = { h, ids: new Array<string>(slots).fill(''), ev: EMPTY };
       for (const id of ctx.roster) app.addPlayer!(s, id, { frame: ctx.frame, player: '', roster: ctx.roster, rng: () => 0 });
       return s;

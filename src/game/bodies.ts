@@ -38,9 +38,28 @@ const POSE_RANGE = 4096;
 /** For tests: draw every body with the invisibility fuzz. */
 export const bodyDebug = { fuzz: false };
 
+/**
+ * World-renderer hooks a model may offer beyond the core API (createDoomguyFactory(wad)
+ * .create(color), setColor, setLight, setSceneLighting, setFlashBoost, pose, dispose).
+ * Optional, so another model implementation drops in without them.
+ */
+export interface ModelExtras {
+  /** draw through the world's palette texture (screen tints, fixed colormaps) */
+  setWorldPalette?(tex: THREE.Texture | null, palNum: number, fixedColormap?: number): void;
+  /** dynamic light reaching the model, linear RGB */
+  setDynamicLight?(r: number, g: number, b: number): void;
+  /** 1: alpha carries the emissive amount (the world's bloom reads alpha) */
+  setEmissiveAlpha?(k: number): void;
+  /** spectre fuzz (invisibility) */
+  setFuzz?(on: boolean, time?: number): void;
+  /** forget animation state (pooled reuse) */
+  reset?(seed?: number): void;
+}
+type Model = DoomguyModel & ModelExtras;
+
 interface Body {
   id: number;
-  model: DoomguyModel;
+  model: Model;
   holder: THREE.Group;
   color: number;
   x: number;
@@ -130,13 +149,13 @@ export class ModelBodies implements PlayerBodyRenderer {
       const frame = m.frame & FF_FRAMEMASK;
       const model = b.model;
       model.setLight(ctx.lightOf(m), ctx.extralight);
-      model.setWorldPalette(ctx.palette, ctx.palNum, ctx.fixedColormap);
+      model.setWorldPalette?.(ctx.palette, ctx.palNum, ctx.fixedColormap);
       const dl = ctx.dynLightAt(m, m.z + 32, this.tmp);
       // one sample for the whole body (the sprites light per pixel with a wrapped
       // facing term, ~0.7 on average); capped so a stack of plasma balls cannot blow it white
       const k = 0.7 / Math.max(1, Math.max(dl.x, dl.y, dl.z) * 0.7 / 1.1);
-      model.setDynamicLight(dl.x * k, dl.y * k, dl.z * k);
-      model.setFuzz((m.flags & MF_SHADOW) !== 0 || bodyDebug.fuzz, ctx.time);
+      model.setDynamicLight?.(dl.x * k, dl.y * k, dl.z * k);
+      model.setFuzz?.((m.flags & MF_SHADOW) !== 0 || bodyDebug.fuzz, ctx.time);
       model.pose({
         frame,
         moveSpeed: b.speed,
@@ -150,7 +169,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       if (b.seen === stamp) continue;
       this.live.delete(id);
       b.holder.removeFromParent();
-      if (this.free.length < FREE_KEEP) this.free.push(b);
+      if (this.free.length < FREE_KEEP && typeof b.model.reset === 'function') this.free.push(b);
       else b.model.dispose();
     }
     if (this.colorOf.size > 512) {
@@ -164,16 +183,16 @@ export class ModelBodies implements PlayerBodyRenderer {
     const reuse = this.free.pop();
     if (reuse) {
       reuse.id = id;
-      reuse.model.reset(id);
+      reuse.model.reset?.(id);
       reuse.model.setColor(color);
       reuse.color = color;
       reuse.speed = 0;
       this.live.set(id, reuse);
       return reuse;
     }
-    const model = this.factory.create(color, id);
+    const model: Model = this.factory.create(color, id);
     model.setSceneLighting(0);
-    model.setEmissiveAlpha(1);
+    model.setEmissiveAlpha?.(1);
     const holder = new THREE.Group();
     holder.name = 'player-body';
     holder.rotation.x = Math.PI / 2; // Y-up model in the Z-up world

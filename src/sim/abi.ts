@@ -16,6 +16,10 @@ export interface DoomSimExports {
   sim_sound_names(): number;
   sim_version(): number;
   world_new(map: number, seed: number, slots: number): number;
+  /** v2: cfg = u32 words (src/menu/modes.ts cfgWords) */
+  world_new_cfg(ptr: number, len: number): number;
+  /** v2: 13 words, 6 per capture point, 5 boss words (MATCH_* below) */
+  world_view_match(h: number): number;
   world_free(h: number): void;
   world_clone(h: number): number;
   world_serialize(h: number): number;
@@ -66,6 +70,19 @@ export const R_SLOT = 0, R_HUMAN = 1, R_MOBJ = 2, R_FRAGS = 3, R_DEATHS = 4, R_H
 /** Event: 8 i32. */
 export const EVENT_WORDS = 8;
 export const EV_SOUND = 1, EV_OBITUARY = 2, EV_PICKUP = 3, EV_DAMAGE = 4, EV_SPAWN = 5, EV_SWITCH = 6, EV_MATCH_START = 7, EV_MATCH_END = 8;
+export const EV_MAP_CHANGE = 9, EV_ROUND_START = 10, EV_ROUND_END = 11, EV_POINT_CAPTURED = 12, EV_TICKETS_LOW = 13, EV_BOSS_SPAWN = 14, EV_BOSS_KILLED = 15;
+
+/** world_view_match words (DESIGN.md "ABI additions (v2)"). */
+export const MV = {
+  mode: 0, phase: 1, phaseLeft: 2, matchIndex: 3, map: 4, nextMap: 5, scoreRed: 6, scoreBlue: 7,
+  round: 8, aliveRed: 9, aliveBlue: 10, winner: 11, points: 12,
+} as const;
+/** per capture point, after MV.points: x, y, radius (fixed), owner (-1/0/1), progress (-100 red..100 blue), flags (1 red in, 2 blue in) */
+export const POINT_WORDS = 6;
+/** after the points: boss mobj id, boss type, health, max health, tics to the next boss (-1 none) */
+export const BOSS_WORDS = 5;
+/** match phases */
+export const PHASE_PLAY = 0, PHASE_FREEZE = 1, PHASE_ROUND_OVER = 2, PHASE_INTERMISSION = 3;
 
 /** Doom mobj flags the shell reads. */
 export const MF_SHOOTABLE = 0x4, MF_MISSILE = 0x10000, MF_SHADOW = 0x40000, MF_CORPSE = 0x100000;
@@ -74,9 +91,22 @@ export const MF_SHOOTABLE = 0x4, MF_MISSILE = 0x10000, MF_SHADOW = 0x40000, MF_C
  * Instantiate the module. Whatever the binary imports (a panic hook, a log) is
  * satisfied with a stub that reports, so a sim built with or without them loads.
  */
-export async function instantiateSim(source: Response | Promise<Response> | ArrayBuffer | Uint8Array): Promise<DoomSimExports> {
+export async function compileSim(source: Response | Promise<Response> | ArrayBuffer | Uint8Array): Promise<WebAssembly.Module> {
+  if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return WebAssembly.compile(source as BufferSource);
+  const res = await source;
+  if (!res.ok) throw new Error(`doomsim.wasm: HTTP ${res.status}`);
+  try {
+    return await WebAssembly.compileStreaming(res.clone());
+  } catch {
+    return WebAssembly.compile(await res.arrayBuffer());
+  }
+}
+
+export async function instantiateSim(source: Response | Promise<Response> | ArrayBuffer | Uint8Array | WebAssembly.Module): Promise<DoomSimExports> {
   let module: WebAssembly.Module;
-  if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
+  if (source instanceof WebAssembly.Module) {
+    module = source;
+  } else if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
     module = await WebAssembly.compile(source as BufferSource);
   } else {
     const res = await source;

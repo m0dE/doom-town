@@ -196,3 +196,19 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
 }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* mode tabs over the server list */
+.mode-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 10px; }
+.mode-tabs button { padding: 7px 12px; border-radius: 3px; border: 1px solid rgba(255, 130, 70, .18); background: rgba(0, 0, 0, .3);
+  font: 700 12px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mode-tabs button small { margin-left: 8px; font: 600 11px/1 var(--ui); letter-spacing: 0; color: rgba(255, 255, 255, .35); }
+.mode-tabs button:hover { color: var(--text); border-color: rgba(255, 106, 58, .45); }
+.mode-tabs button[aria-selected="true"] { color: #fff; background: linear-gradient(#a3160d, #5e0804); border-color: #ff6a3a; }
+.mode-tabs button[aria-selected="true"] small { color: rgba(255, 220, 200, .7); }
+.srv-name .badge { margin-left: 8px; padding: 2px 6px; border-radius: 3px; font: 800 10px/1 var(--display); letter-spacing: .12em;
+  text-transform: uppercase; font-style: normal; color: #ffd8b0; background: rgba(255, 106, 58, .16); border: 1px solid rgba(255, 106, 58, .4); white-space: nowrap; }
+.srv-name .badge.boss { color: #fff; background: linear-gradient(#c4160f, #6d0904); border-color: #ff6a3a; }
+.offline-group { display: inline-flex; align-items: stretch; }
+.offline-group .btn.ghost { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.offline-mode { border-radius: 0 4px 4px 0; border: 1px solid rgba(255, 130, 70, .35); border-left: 0; background: rgba(10, 6, 5, .85); color: var(--text);
+  padding: 0 10px; font: 600 13px/1 var(--ui); cursor: pointer; max-width: 15em; }

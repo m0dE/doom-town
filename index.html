@@ -42,11 +42,21 @@
         <span class="sr-only">Doom Town</span>
         <span class="logo-text">Freedoom-powered deathmatch, up to <b>64 players</b></span>
       </h1>
-      <p class="tag">Now playing <span id="map-title"></span>. Jump in any time.</p>
+      <p class="tag">Deathmatch, team deathmatch, elimination and 100-on-100 war across <span id="map-title"></span>. Jump in any time.</p>
 
       <div class="actions">
         <button id="quickplay" class="btn primary" type="button">Quick Play</button>
-        <button id="offline" class="btn ghost" type="button">Play offline with bots</button>
+        <span class="offline-group">
+          <button id="offline" class="btn ghost" type="button">Play offline with bots</button>
+          <select id="offline-mode" class="offline-mode" aria-label="Offline game">
+            <option value="">Deathmatch</option>
+            <option value="boss">Deathmatch · Random bosses</option>
+            <option value="tdm">Team Deathmatch</option>
+            <option value="tdm-boss">Team Deathmatch · Random bosses</option>
+            <option value="elim">Elimination</option>
+            <option value="war">War 100 v 100</option>
+          </select>
+        </span>
       </div>
 
       <div class="servers panel">
@@ -54,6 +64,7 @@
           <h2>Servers</h2>
           <span id="rooms-status" class="muted"></span>
         </div>
+        <div id="mode-tabs" class="mode-tabs" role="tablist" aria-label="Game mode"></div>
         <div class="srv-cols" aria-hidden="true"><span>Room</span><span>Map</span><span>Players</span><span>Up</span><span></span></div>
         <div id="rooms" class="srv-list"></div>
         <form id="custom" class="custom" autocomplete="off">

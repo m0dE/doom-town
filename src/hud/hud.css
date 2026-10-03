@@ -40,6 +40,17 @@
 .h-net { position: absolute; left: 50%; top: calc(var(--k) * 26px); transform: translateX(-50%); padding: 6px 14px; border-radius: 3px;
   background: rgba(120, 10, 4, .85); color: #fff; font-weight: 600; letter-spacing: .04em; }
 
+/* modes: capture points, boss bar, banner */
+.h-points { position: absolute; left: 50%; top: calc(var(--k) * 3px); transform: translateX(-50%); display: flex; gap: calc(var(--k) * 3px); }
+.h-points .pt { position: relative; display: grid; place-items: center; width: calc(var(--k) * 14px); height: calc(var(--k) * 14px);
+  border: calc(var(--k) * 1px) solid; border-radius: 2px; box-shadow: 0 2px 0 rgba(0,0,0,.6); }
+.h-points .pt i { position: absolute; left: 0; bottom: 0; height: calc(var(--k) * 1.5px); }
+.h-boss { position: absolute; left: 50%; top: calc(var(--k) * 22px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(var(--k) * 2px); }
+.h-boss .bar { width: calc(var(--k) * 140px); height: calc(var(--k) * 4px); background: rgba(0,0,0,.6); border: 1px solid rgba(255, 90, 50, .6); border-radius: 2px; overflow: hidden; }
+.h-boss .bar i { display: block; height: 100%; background: linear-gradient(#ff4a2a, #8c0a04); }
+.h-banner { position: absolute; left: 0; right: 0; top: 30%; display: flex; justify-content: center; filter: drop-shadow(0 3px 0 rgba(0,0,0,.7)); }
+.h-scores .title.sub { margin-top: calc(var(--k) * -2px); }
+
 /* Esc menu */
 .pause { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(5, 2, 2, .62); backdrop-filter: blur(2px); }
 .pause .box { width: min(440px, calc(100vw - 32px)); padding: 26px 28px 22px; border-radius: 8px; background: rgba(16, 10, 9, .96); border: 1px solid rgba(255, 130, 70, .3); box-shadow: 0 30px 80px rgba(0,0,0,.7); }

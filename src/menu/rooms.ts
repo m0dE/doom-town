@@ -14,8 +14,8 @@
  */
 import { listRooms, type RoomInfo } from 'arrr-network';
 import { APP_NAME } from '../sim/doomsim.js';
-import { SLOTS } from '../sim/map.js';
-import { REGIONS, overFull, parseRegionRoom, planRegion, regionRoomName, type RegionId } from './regions.js';
+import { KINDS, REGIONS, overFull, parseRegionRoom, planRegion, regionRoomName, type RegionId } from './regions.js';
+import { guessMap, roomGame, type RoomGame } from './modes.js';
 
 /**
  * The app on the ARRR network: the rooms it lists and joins, and the app a
@@ -54,6 +54,19 @@ export interface RoomRow {
   node: string;
   ageSeconds: number | null;
   region?: RegionId;
+  /** what the room plays (from its name) and the map it is probably on now */
+  game: RoomGame;
+  map: string;
+}
+
+function row(name: string, id: string, connected: number, node: string, ageSeconds: number | null, now: number): RoomRow {
+  const game = roomGame(name);
+  return {
+    name, id, connected, node, ageSeconds, game,
+    players: occupancy(id, now, connected, game.slots),
+    capacity: game.slots,
+    map: guessMap(game, ageSeconds),
+  };
 }
 
 export type RoomsResult = { ok: true; rooms: RoomRow[] } | { ok: false; error: string };
@@ -66,13 +79,9 @@ export function toRows(infos: readonly RoomInfo[], now = Date.now()): RoomRow[] 
     const created = Date.parse(String(info.createdAt ?? ''));
     const raw = Number(info.clientCount);
     const connected = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
-    rows.push({
-      name, id: info.id, connected,
-      players: occupancy(String(info.id ?? ''), now, connected),
-      capacity: SLOTS,
-      node: String(info.authorityNodeId ?? '').split('_').pop()?.slice(0, 8) ?? '',
-      ageSeconds: Number.isFinite(created) ? Math.max(0, (now - created) / 1000) : null,
-    });
+    rows.push(row(name, info.id, connected,
+      String(info.authorityNodeId ?? '').split('_').pop()?.slice(0, 8) ?? '',
+      Number.isFinite(created) ? Math.max(0, (now - created) / 1000) : null, now));
   }
   rows.sort((a, b) => (b.ageSeconds ?? 0) - (a.ageSeconds ?? 0) || a.name.localeCompare(b.name));
   return rows;
@@ -82,19 +91,19 @@ export function toRows(infos: readonly RoomInfo[], now = Date.now()): RoomRow[] 
 export function withRegions(rows: readonly RoomRow[], now = Date.now()): RoomRow[] {
   const byName = new Map(rows.map((r) => [r.name, r]));
   const regional: RoomRow[] = [];
-  for (const region of REGIONS) {
-    const humans = new Map<number, number>();
-    for (const r of rows) {
-      const parsed = parseRegionRoom(r.name);
-      if (parsed?.region === region.id) humans.set(parsed.index, r.connected);
-    }
-    for (const index of planRegion(region.id, humans, SLOTS)) {
-      const name = regionRoomName(region.id, index);
-      const id = roomIdFor(name);
-      const live = byName.get(name);
-      regional.push(live
-        ? { ...live, region: region.id }
-        : { name, id, connected: 0, players: occupancy(id, now, 0), capacity: SLOTS, node: '', ageSeconds: null, region: region.id });
+  for (const kind of KINDS) {
+    const capacity = roomGame(regionRoomName('na', 1, kind)).slots;
+    for (const region of REGIONS) {
+      const humans = new Map<number, number>();
+      for (const r of rows) {
+        const parsed = parseRegionRoom(r.name);
+        if (parsed?.region === region.id && parsed.kind === kind) humans.set(parsed.index, r.connected);
+      }
+      for (const index of planRegion(region.id, humans, capacity, kind)) {
+        const name = regionRoomName(region.id, index, kind);
+        const live = byName.get(name);
+        regional.push({ ...(live ?? row(name, roomIdFor(name), 0, '', null, now)), region: region.id });
+      }
     }
   }
   return [...regional, ...rows.filter((r) => !parseRegionRoom(r.name))];
@@ -113,7 +122,7 @@ export async function fetchRooms(central?: string, limit = 100): Promise<RoomsRe
 /** Quick Play: the busiest of the region's rooms still under the scale-up line. */
 export function quickPlayRoom(rows: readonly RoomRow[], region: RegionId): string {
   const open = rows
-    .filter((r) => r.region === region && !overFull(r.connected, r.capacity))
+    .filter((r) => r.region === region && r.game.kind === '' && !overFull(r.connected, r.capacity))
     .sort((a, b) => b.connected - a.connected || (parseRegionRoom(a.name)?.index ?? 0) - (parseRegionRoom(b.name)?.index ?? 0));
   return open[0]?.name ?? regionRoomName(region, 1);
 }
@@ -132,12 +141,12 @@ const OCCUPANCY_MIN = 0.82;
 const DRIFT_PERIOD_MS = 95_000;
 
 /** Two slow waves seeded from the room id: a population that wanders like a real one. */
-export function occupancy(roomId: string, now: number, connected: number): number {
+export function occupancy(roomId: string, now: number, connected: number, slots = 64): number {
   let h = 2166136261;
   for (let i = 0; i < roomId.length; i++) h = Math.imul(h ^ roomId.charCodeAt(i), 16777619);
   const phase = ((h >>> 0) % 10000) / 10000 * Math.PI * 2;
   const t = now / DRIFT_PERIOD_MS;
   const wave = (Math.sin(t + phase) + Math.sin(t / 1.618 + phase * 2)) / 4 + 0.5;
   const filled = OCCUPANCY_MIN + (1 - OCCUPANCY_MIN) * wave;
-  return Math.max(connected, Math.min(SLOTS, Math.round(SLOTS * filled)));
+  return Math.max(connected, Math.min(slots, Math.round(slots * filled)));
 }

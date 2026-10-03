@@ -10,8 +10,9 @@ export function mapPwad(wad: Wad, map: string): Uint8Array {
   const parts: { name: string; data: Uint8Array }[] = [{ name: map.toUpperCase(), data: new Uint8Array(0) }];
   for (const name of MAP_LUMPS) {
     const data = lumps.get(name);
-    if (!data) throw new Error(`${map} has no ${name}`);
-    parts.push({ name, data });
+    // REJECT and BLOCKMAP may be missing (generated war maps): the sim builds its own
+    if (!data && name !== 'REJECT' && name !== 'BLOCKMAP') throw new Error(`${map} has no ${name}`);
+    parts.push({ name, data: data ?? new Uint8Array(0) });
   }
   return buildWadFile(parts, 'PWAD');
 }

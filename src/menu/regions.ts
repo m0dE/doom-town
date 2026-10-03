@@ -31,7 +31,7 @@ export type RegionId = 'na' | 'eu' | 'asia';
 export interface Region {
   id: RegionId;
   label: string;
-  /** Rooms this region keeps listed at all times. */
+  /** Deathmatch rooms this region keeps listed at all times. */
   standing: number;
 }
 
@@ -42,6 +42,21 @@ export const REGIONS: readonly Region[] = [
   { id: 'asia', label: 'Asia', standing: 1 },
 ];
 
+/**
+ * The standing rooms of every other game, per region: the room kind is the words a
+ * regional room name carries between region and number (src/menu/modes.ts), e.g.
+ * `na-tdm-1`, `eu-war-1`, `na-boss-1` (Deathmatch with random bosses).
+ */
+export const STANDING: Record<string, Partial<Record<RegionId, number>>> = {
+  '': { na: 2, eu: 1, asia: 1 },
+  tdm: { na: 1, eu: 1, asia: 1 },
+  elim: { na: 1, eu: 1 },
+  war: { na: 1, eu: 1 },
+  boss: { na: 1, eu: 1 },
+  'tdm-boss': { na: 1 },
+};
+export const KINDS: readonly string[] = Object.keys(STANDING);
+
 /** A room over this share of its slots taken by humans counts as full for scaling. */
 export const SCALE_UP_FILL = 0.8;
 
@@ -51,16 +66,18 @@ export function regionOf(id: RegionId): Region {
   return REGIONS.find((r) => r.id === id)!;
 }
 
-/** `na`, 2 → `na-2`: the name the player sees and the name the netcode joins. */
-export function regionRoomName(region: RegionId, index: number): string {
-  return `${region}-${index}`;
+/** `na`, 2 → `na-2`; `na`, 1, `tdm` → `na-tdm-1`: the name the player sees and the netcode joins. */
+export function regionRoomName(region: RegionId, index: number, kind = ''): string {
+  return kind ? `${region}-${kind}-${index}` : `${region}-${index}`;
 }
 
-/** `na-2` → { region: 'na', index: 2 }; null for any other room name. */
-export function parseRegionRoom(name: string): { region: RegionId; index: number } | null {
-  const m = /^([a-z]+)-([1-9]\d{0,2})$/.exec(name);
+/** `na-2` → { region: 'na', kind: '', index: 2 }; `eu-tdm-boss-1` → kind 'tdm-boss'; null otherwise. */
+export function parseRegionRoom(name: string): { region: RegionId; kind: string; index: number } | null {
+  const m = /^([a-z]+)-(?:([a-z]+(?:-[a-z]+)?)-)?([1-9]\d{0,2})$/.exec(name);
   if (!m || !REGION_IDS.has(m[1])) return null;
-  return { region: m[1] as RegionId, index: Number(m[2]) };
+  const kind = m[2] ?? '';
+  if (!(kind in STANDING)) return null;
+  return { region: m[1] as RegionId, kind, index: Number(m[3]) };
 }
 
 /** True when more than SCALE_UP_FILL of the room's slots are held by humans. */
@@ -75,9 +92,11 @@ export function overFull(humans: number, capacity: number): boolean {
  * The standing rooms always; every overflow room with a human in it; and, if
  * all of those are over the scale-up line, the lowest unused number as a spare.
  */
-export function planRegion(region: RegionId, humans: ReadonlyMap<number, number>, capacity: number): number[] {
+export function planRegion(region: RegionId, humans: ReadonlyMap<number, number>, capacity: number, kind = ''): number[] {
   const shown = new Set<number>();
-  for (let i = 1; i <= regionOf(region).standing; i++) shown.add(i);
+  const standing = kind ? (STANDING[kind]?.[region] ?? 0) : regionOf(region).standing;
+  if (standing === 0 && ![...humans.values()].some((n) => n > 0)) return [];
+  for (let i = 1; i <= standing; i++) shown.add(i);
   for (const [i, n] of humans) if (n > 0) shown.add(i);
   const saturated = [...shown].every((i) => overFull(humans.get(i) ?? 0, capacity));
   if (saturated) {

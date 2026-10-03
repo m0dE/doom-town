@@ -76,7 +76,7 @@ export class Hero3D {
     this.guy = this.factory.create(color, 3);
     this.guy.setSceneLighting(1);
     this.guy.setFlashBoost(2.5);
-    this.guy.setEmissiveAlpha(0);
+    (this.guy as DoomguyModel & { setEmissiveAlpha?(k: number): void }).setEmissiveAlpha?.(0);
     this.scene.add(this.guy.object);
 
     // warm key from front-left-above, hard red rims from behind both sides, cool low fill
@@ -89,7 +89,6 @@ export class Hero3D {
     const fill = new THREE.DirectionalLight(0x6070a0, 2);
     fill.position.set(80, 10, -40);
     this.scene.add(key, rim, rim2, fill, new THREE.HemisphereLight(0x3a4458, 0x200a04, 2.4));
-    (window as any).__heroDbg = { key, rim, rim2, fill, guy: this.guy };//DBG
     this.flash = new THREE.PointLight(0xffb040, 0, 140, 1.2);
     this.scene.add(this.flash);
 

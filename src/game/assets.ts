@@ -5,14 +5,18 @@
  * Everything else asks for the same promises; nothing is fetched twice.
  */
 import { DoomSim } from '../sim/doomsim.js';
-import { loadWad as openWad, type Wad } from '../wad/index.js';
+import { compileSim } from '../sim/abi.js';
+import { Wad, isArtLump, loadWad as openWad } from '../wad/index.js';
 import { mapPwad } from '../sim/pwad.js';
-import { MAP_LUMP } from '../sim/map.js';
+import { ROTATIONS, checkIndex, type RotationKey } from '../sim/maps.js';
 
 const base = (): string => (import.meta.env?.BASE_URL ?? './');
 
 let wadP: Promise<Wad> | null = null;
-let simP: Promise<DoomSim> | null = null;
+let baseBytes: Uint8Array | null = null;
+let moduleP: Promise<WebAssembly.Module> | null = null;
+const sims = new Map<RotationKey, Promise<DoomSim>>();
+const arts = new Map<string, Promise<Uint8Array | null>>();
 const listeners = new Set<(label: string, frac: number) => void>();
 const progress = { wad: 0, sim: 0 };
 /** A player's own DOOM2.WAD (art only), merged over the game's; see src/wad/wad.ts `loadWad`. */
@@ -78,6 +82,7 @@ export function loadWad(): Promise<Wad> {
     for (const url of urls) {
       try {
         const bytes = await fetchBytes(url, (f) => { progress.wad = f; report(); });
+        baseBytes = bytes;
         const wad = openWad(bytes, userWad);
         progress.wad = 1; report();
         return wad;
@@ -89,20 +94,54 @@ export function loadWad(): Promise<Wad> {
   return wadP;
 }
 
-/** The sim module with the match's map loaded. */
-export function loadSim(): Promise<DoomSim> {
-  simP ??= (async () => {
-    const wasm = fetch(`${base()}doomsim.wasm`);
-    const wad = await loadWad();
-    const sim = await DoomSim.create(wasm, mapPwad(wad, MAP_LUMP));
-    progress.sim = 1; report();
-    return sim;
-  })().catch((err) => { simP = null; throw err; });
-  return simP;
+/**
+ * The sim with one rotation's maps loaded (in rotation order, so every client numbers
+ * them alike). The module is compiled once; each rotation gets its own instance.
+ */
+export function loadSim(rotation: RotationKey = 'deathmatch', onMap?: (i: number, n: number) => void): Promise<DoomSim> {
+  let p = sims.get(rotation);
+  if (!p) {
+    p = (async () => {
+      moduleP ??= compileSim(fetch(`${base()}doomsim.wasm`)).catch((err) => { moduleP = null; throw err; });
+      const [module, wad] = await Promise.all([moduleP, loadWad()]);
+      const maps = ROTATIONS[rotation].map((name) => ({ name, pwad: mapPwad(wad, name) }));
+      const sim = await DoomSim.create(module, maps, onMap);
+      progress.sim = 1; report();
+      return sim;
+    })().catch((err) => { sims.delete(rotation); throw err; });
+    sims.set(rotation, p);
+  }
+  return p;
+}
+
+/** A map's art pak (public/maps/<MAP>.wad), fetched once; null when there is none. */
+export function fetchMapArt(map: string): Promise<Uint8Array | null> {
+  let p = arts.get(map);
+  if (!p) {
+    p = fetch(`${base()}maps/${map}.wad`).then(async (r) => (r.ok ? new Uint8Array(await r.arrayBuffer()) : null)).catch(() => null);
+    arts.set(map, p);
+  }
+  return p;
+}
+
+/** The game data with a map's art merged over the base (a fresh Wad: the renderer's per-map assets). */
+export async function mapWad(map: string): Promise<Wad> {
+  const base0 = await loadWad();
+  const art = await fetchMapArt(map);
+  if (!art || art.length <= 12 || !baseBytes) return base0;
+  const w = new Wad(baseBytes);
+  w.add(art);
+  if (userWad) w.add(userWad, isArtLump);
+  return w;
+}
+
+/** maps/index.json, for a consistency check against src/sim/maps.ts (dev aid). */
+export function checkMapIndex(): void {
+  void fetch(`${base()}maps/index.json`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) checkIndex(j); }).catch(() => { /* optional */ });
 }
 
 /** Kick both off; errors surface when Play awaits them. */
 export function prefetch(): void {
   void loadWad().catch(() => { /* reported at Play */ });
-  void loadSim().catch(() => { /* reported at Play */ });
+  void loadSim('deathmatch').catch(() => { /* reported at Play */ });
 }

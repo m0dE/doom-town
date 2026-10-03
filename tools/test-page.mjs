@@ -61,13 +61,13 @@ try {
   say('  ' + await Promise.race([warmed, page.waitForTimeout(90000).then(() => 'no prewarm message')]));
   await page.waitForTimeout(1000);
   const t0 = Date.now();
-  await page.click('#offline');
+  await page.evaluate(() => window.__practice());
   // In the game: the match object is up and the loading screen is gone.
   await page.waitForFunction(() => !!window.__game && document.getElementById('loading').classList.contains('hidden'), null, { timeout: 20000, polling: 20 });
   const entered = Date.now() - t0;
   await page.waitForFunction(() => { const g = window.__game; return !!g && g.debug().frame > 5 && g.debug().slot >= 0; }, null, { timeout: 20000, polling: 20 });
   const playing = Date.now() - t0;
-  check(entered < 2000, `Play offline → in the game in ${entered} ms, own marine on the map at ${playing} ms (target < 2000)`);
+  check(entered < 2000, `Practice → in the game in ${entered} ms, own marine on the map at ${playing} ms (target < 2000)`);
   await page.waitForTimeout(1500);
   const d0 = await page.evaluate(() => window.__game.debug());
   say('  start', JSON.stringify({ slot: d0.slot, pos: d0.pos, health: d0.health, frame: d0.frame }));

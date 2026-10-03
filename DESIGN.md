@@ -460,12 +460,14 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   keyframed pose. Visual only; the sim
   never sees it. Look (2026-10-03, after the user's low-poly reference sheet): part meshes
   modelled in Blender (`tools/model/build_parts.py`, runs headless with the `bpy` module)
-  — faceted helmet with a wrap-around visor, V chest with plates, domed sleeves, 8-sided
+  — the Doomguy helmet (open face framed by brow, cheek and chin guards, recessed visor,
+  ear pieces, neck guard, top ridge), V chest with plates, domed sleeves, 8-sided
   limbs, boots with a knee cuff and sole, a pump shotgun; legs half his height, shoulders
   at ±10.5, hips ±7.6 inside the chest (±9), feet apart; faces painted flat
   palette colours in blocky shade noise (`PaintSpec`, rig.ts) — tan helmet, dark visor,
   green suit (kept in the green ramp so player colours apply), bare arms, dark gloves,
-  khaki boots, dark gun with wood.
+  khaki boots, dark gun with wood, all at the sprite's brightness (the sheet's studio-lit
+  values drew 1.5-2x brighter than the sprites in the world). Gun grip at his right hip.
 - The renderer is fed a `RenderFrame` (`src/render/types.ts`) by the game loop:
   interpolated mobjs, sector heights/light, line textures, camera (x, y, z, yaw, pitch),
   psprites, and the event list for effects. It never touches the sim.

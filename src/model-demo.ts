@@ -266,8 +266,10 @@ function compare(factory: DoomguyFactory, sprites: Sprites, info: string): void 
     const drv = DRIVERS[anim](t - animT0);
     guy.pose({ ...drv, pitch: drv.pitch ?? pitch, time: t });
     const cellW = Math.floor(w / 2), cellH = h - 70;
-    const unitPx = Math.max(2, Math.floor(Math.min(cellW / 70, cellH / 72)));
-    const cam = orthoCam(cellW, cellH, unitPx, viewDeg, 28);
+    // &zoom=k&cy=y: closer, centred on height y (e.g. zoom=3&cy=50 for the helmet)
+    const zoom = Number(params.get('zoom') ?? 1);
+    const unitPx = Math.max(2, Math.floor(Math.min(cellW / 70, cellH / 72) * zoom));
+    const cam = orthoCam(cellW, cellH, unitPx, viewDeg, Number(params.get('cy') ?? 28));
     renderer.setClearColor(0x3c3c3c);
     renderCell(scene, cam, 0, 0, cellW, cellH, h);
     octx.clearRect(0, 0, w, h);

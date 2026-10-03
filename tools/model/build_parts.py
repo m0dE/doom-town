@@ -149,6 +149,18 @@ def band(bm, c, rx, rz, y0, y1, a0, a1, segs=8, thick=0.8):
         bm.faces.new((a0_, a1_, b1, b0))
 
 
+# The helmet's dome (model space): centre x, y, radii; the visor, mouth and guards follow it.
+H = {'cx': 0.4, 'cy': 51.0, 'rx': 5.6, 'ry': 5.4, 'rz': 6.1}
+
+
+def helm_band(bm, y0, y1, a0, a1, out=0.8, thick=1.0, segs=8):
+    """A strip around the helmet dome between heights y0..y1, angles a0..a1 (0 = front),
+    `out` units proud of the dome at the strip's mid height (negative: recessed)."""
+    ym = (y0 + y1) / 2
+    k = math.sqrt(max(0.05, 1 - ((ym - H['cy']) / H['ry']) ** 2))
+    band(bm, (H['cx'], 0.0), H['rx'] * k + out, H['rz'] * k + out, y0, y1, a0, a1, segs=segs, thick=thick)
+
+
 def build(part):
     n, mn, mx = part['name'], part['min'], part['max']
     bm = bmesh.new()
@@ -177,17 +189,31 @@ def build(part):
         pv = box(bm, [mn[0] - 0.3, 36.0, -5.6], [mn[0] + 1.6, 45.6, 5.6])   # back plate
         bevel(bm, pv, 0.5, 1)
     elif n == 'helmet':
-        # round and faceted; the brim comes low at the back and sides, the face is open below the visor
-        ellipsoid(bm, [mn[0], mn[1] - 1.0, mn[2]], [mx[0] - 0.6, mx[1], mx[2]], segs=10, rings=7)
+        # The Doomguy helmet. A faceted dome; around its open face a brow that overhangs
+        # the (recessed, separate) visor, cheek guards down both sides, a chin guard under
+        # the mouth; round ear pieces, a neck guard flaring at the back, a ridge on top.
+        ellipsoid(bm, [H['cx'] - H['rx'], H['cy'] - H['ry'], -H['rz']], [H['cx'] + H['rx'], H['cy'] + H['ry'], H['rz']], segs=12, rings=8)
         for v in bm.verts:
-            v.co.y = max(v.co.y, mn[1])
-        pv = box(bm, [mx[0] - 3.4, mn[1], -3.2], [mx[0] - 0.2, mn[1] + 1.8, 3.2])  # chin guard
-        bevel(bm, pv, 0.5, 1)
+            v.co.y = max(v.co.y, mn[1] + 0.9)
+        # the face opening: the visor and mouth sit in it, framed by the guards
+        face = [f for f in bm.faces if abs(math.atan2(f.calc_center_median().z, f.calc_center_median().x - H['cx'])) < 1.0
+                and 45.5 < f.calc_center_median().y < 52.9]
+        bmesh.ops.delete(bm, geom=face, context='FACES_ONLY')
+        helm_band(bm, 52.5, 53.9, -1.05, 1.05, out=0.5)                 # brow
+        for a0, a1 in ((0.9, 1.35), (-1.35, -0.9)):                     # cheek guards
+            helm_band(bm, 46.0, 52.8, a0, a1, out=0.9)
+        helm_band(bm, 45.0, 47.0, -1.0, 1.0, out=0.9)                   # chin guard
+        helm_band(bm, 45.0, 47.6, 1.9, 4.38, out=0.7)                   # neck guard
+        for z0, z1 in ((H['rz'] - 0.6, H['rz'] + 1.0), (-H['rz'] - 1.0, -H['rz'] + 0.6)):   # ear pieces
+            loft(bm, [H['cx'] - 2.4, 48.0, z0], [H['cx'] + 2.4, 52.8, z1], axis=2, sides=8)
+        pv = box(bm, [H['cx'] - 4.4, H['cy'] + H['ry'] - 1.2, -0.7], [H['cx'] + 3.6, H['cy'] + H['ry'] + 0.3, 0.7])  # ridge
+        for v in pv:                                                     # follows the dome down front and back
+            v.co.y -= 0.12 * (v.co.x - H['cx']) ** 2 / 4
+        bevel(bm, pv, 0.3, 1)
     elif n == 'visor':
-        # wraps the helmet's front (helmet: centre x 0.5, half-width 5.5 deep, 6.2 wide)
-        band(bm, (0.5, 0.0), 5.95, 6.45, mn[1], mx[1], -0.95, 0.95, segs=8, thick=0.9)
+        helm_band(bm, mn[1], mx[1], -1.02, 1.02, out=-0.4, thick=1.2, segs=8)
     elif n == 'mouth':
-        band(bm, (0.5, 0.0), 5.6, 6.0, mn[1], mx[1], -0.4, 0.4, segs=4, thick=1.2)
+        helm_band(bm, mn[1], mx[1], -1.02, 1.02, out=-0.9, thick=1.4, segs=6)
     elif n in ('padR', 'padL'):
         # a domed sleeve over the deltoid: the lower half pulled in
         ellipsoid(bm, mn, mx, segs=8, rings=6)

@@ -75,10 +75,15 @@ const mirrorZ = (b: BoxDef, name: string, bone: number, faces: Faces): BoxDef =>
   max: [b.max[0], b.max[1], -b.min[2]],
 });
 
-/** the reference sheet's palette (sRGB) */
-const SUIT: RGB = [66, 150, 54], TAN: RGB = [170, 158, 122], VISOR: RGB = [38, 38, 44];
-const SKIN: RGB = [228, 158, 110], SKIN_DARK: RGB = [176, 112, 72], GLOVE: RGB = [50, 50, 55], BOOT: RGB = [152, 142, 110], SOLE: RGB = [96, 90, 72];
-const BELT: RGB = [66, 60, 48], POUCH: RGB = [132, 122, 96], GUN: RGB = [50, 50, 56], WOOD: RGB = [116, 72, 40];
+/**
+ * The reference sheet's hues at the Freedoom sprite's brightness (sRGB): in the world these
+ * go through Doom's light tables like sprite pixels, and the sheet's studio-lit values
+ * (suit 66,150,54; skin 228,158,110) drew 1.5-2x brighter than the sprites around them.
+ * Measured sprite averages: suit 40,84,30, skin 150,100,62, armour grey 82.
+ */
+const SUIT: RGB = [42, 88, 32], TAN: RGB = [120, 108, 84], VISOR: RGB = [22, 22, 26];
+const SKIN: RGB = [158, 104, 66], SKIN_DARK: RGB = [110, 70, 44], GLOVE: RGB = [36, 36, 40], BOOT: RGB = [106, 98, 76], SOLE: RGB = [56, 52, 42];
+const BELT: RGB = [44, 40, 32], POUCH: RGB = [98, 90, 70], GUN: RGB = [38, 38, 42], WOOD: RGB = [86, 52, 28];
 type RGB = readonly [number, number, number];
 const paint = (c: RGB, green = false): PaintSpec => ({ paint: c, green });
 
@@ -99,10 +104,11 @@ export function defineBoxes(): BoxDef[] {
   add({ name: 'pouchB', bone: B.pelvis, min: [-8.4, 29.4, -4], max: [-6, 33.4, 4], faces: all(paint(POUCH)) });
   add({ name: 'torso', bone: B.torso, min: [-6, 33, -9], max: [6.6, 46.8, 9], faces: all(suit) });
 
-  // ---- head: a faceted tan helmet, a wide dark visor -------------------------
-  add({ name: 'helmet', bone: B.head, min: [-5, 45.6, -6.2], max: [6.6, 56, 6.2], faces: all(paint(TAN)) });
-  add({ name: 'visor', bone: B.head, min: [5.6, 48.8, -4.5], max: [7.5, 52.8, 4.5], faces: all(paint(VISOR)) });
-  add({ name: 'mouth', bone: B.head, min: [5.2, 47.2, -2.3], max: [6.8, 48.9, 2.3], faces: all(paint(SKIN_DARK)) });
+  // ---- head: the Doomguy helmet — dome, brow over a recessed visor, cheek and chin guards,
+  //      ear pieces, neck guard, a ridge over the top ----
+  add({ name: 'helmet', bone: B.head, min: [-5.6, 45, -7.1], max: [6.8, 56.6, 7.1], faces: all(paint(TAN)) });
+  add({ name: 'visor', bone: B.head, min: [3.4, 48.6, -4.9], max: [5.6, 52.6, 4.9], faces: all(paint(VISOR)) });
+  add({ name: 'mouth', bone: B.head, min: [3.2, 46.6, -4.6], max: [5.4, 48.7, 4.6], faces: all(paint(SKIN_DARK)) });
 
   // ---- shoulders: rounded green sleeves over the deltoids -------------------------
   const padR = add({ name: 'padR', bone: B.padR, min: [-4.2, 38.5, 6.8], max: [4.2, 47, 14.4], faces: all(suit) });

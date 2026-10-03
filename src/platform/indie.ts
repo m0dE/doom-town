@@ -1,7 +1,7 @@
 /**
  * The indie.fun SDK (https://www.indie.fun/js/indie.js), in the indie.fun
- * export only: `npm run export:indiefun` bakes `VITE_INDIE_APP_ID` into the
- * bundle. Every other build has no App ID, loads nothing and sends nothing -
+ * export only: `npm run export:indiefun` bakes doom-town's indie.fun App ID
+ * (tools/export.mjs) into the bundle as `VITE_INDIE_APP_ID`. Every other build has no App ID, loads nothing and sends nothing -
  * each call below is then a no-op.
  *
  * What the SDK gives a page by being constructed: sessions and their length,

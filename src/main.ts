@@ -20,7 +20,6 @@ import { ServerBrowser, esc } from './menu/serverbrowser.js';
 import { Account, type AccountState } from './menu/account.js';
 import { cleanRoomName } from './menu/rooms.js';
 import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
-import { ALL_MAPS } from './sim/maps.js';
 import { MODES, MODE_ORDER, gameFor, roomNameFor, type ModeKey } from './menu/modes.js';
 import type { Game } from './game/game.js';
 
@@ -37,8 +36,6 @@ const errorBox = $('error');
 const loading = $('loading');
 const loadingBar = $('loading-bar');
 const loadingLabel = $('loading-label');
-
-$('map-title').textContent = `${ALL_MAPS.length} maps`;
 
 // The title: our own lettering, at a whole-number pixel scale that fits the column.
 const logo = $<HTMLCanvasElement>('logo');

@@ -23,7 +23,7 @@ How the parts fit is in [DESIGN.md](DESIGN.md).
 
 ## License
 
-The code is **GPL-2.0-or-later** ([LICENSE](LICENSE)). It is derived from the DOOM
+The code is **GPL-2.0** ([LICENSE](LICENSE)). It is derived from the DOOM
 source code, Copyright (C) 1993-1996 id Software, Inc., released under the GPL.
 
 Game data is from the Freedoom project, BSD-3-Clause

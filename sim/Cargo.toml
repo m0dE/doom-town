@@ -1,0 +1,31 @@
+[package]
+name = "doomsim"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Deterministic Doom deathmatch playsim (port of linuxdoom-1.10) for Freedoom Deathmatch"
+publish = false
+
+[features]
+# native-only section timing (uses std::time::Instant)
+prof = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+strip = true
+
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = false

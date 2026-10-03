@@ -1,0 +1,57 @@
+/* In-game HUD. Everything here is drawn with the WAD's own graphics on canvases scaled pixelated. */
+#hud { position: fixed; inset: 0; z-index: 20; pointer-events: none; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: #eee; user-select: none; }
+#hud canvas { image-rendering: pixelated; display: block; }
+#hud [hidden] { display: none !important; }
+#hud .dtext { image-rendering: pixelated; }
+
+.h-msgs { position: absolute; left: calc(var(--k) * 4px); top: calc(var(--k) * 3px); display: flex; flex-direction: column; gap: calc(var(--k) * 1px); }
+.h-feed { position: absolute; right: calc(var(--k) * 4px); top: calc(var(--k) * 16px); display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--k) * 2px); }
+.h-feed > div, .h-msgs > div { transition: opacity .4s; }
+.h-feed > div.old, .h-msgs > div.old { opacity: 0; }
+.h-top { position: absolute; right: calc(var(--k) * 4px); top: calc(var(--k) * 3px); display: flex; align-items: center; gap: calc(var(--k) * 6px); }
+.h-cross { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%); opacity: .75; }
+.h-cross::before, .h-cross::after { content: ""; position: absolute; background: #ffd27a; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.h-cross::before { left: 6px; top: 0; width: 2px; height: 14px; clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%, 0 65%, 100% 65%, 100% 100%, 0 100%); }
+.h-cross::after { top: 6px; left: 0; height: 2px; width: 14px; clip-path: polygon(0 0, 35% 0, 35% 100%, 0 100%, 0 0, 65% 0, 100% 0, 100% 100%, 65% 100%); }
+.h-center { position: absolute; left: 0; right: 0; top: 58%; display: flex; flex-direction: column; align-items: center; gap: calc(var(--k) * 3px); }
+
+.h-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; }
+.h-bar.fill { background-size: calc(var(--k) * 64px); image-rendering: pixelated; box-shadow: 0 -1px 0 rgba(0,0,0,.6); }
+.h-bar canvas.stbar { width: calc(320px * var(--k)); height: calc(32px * var(--k)); }
+
+.h-full { position: absolute; left: 0; right: 0; bottom: calc(var(--k) * 4px); display: flex; justify-content: space-between; align-items: flex-end; padding: 0 calc(var(--k) * 6px); }
+.h-full .grp { display: flex; align-items: flex-end; gap: calc(var(--k) * 8px); }
+.h-full .item { display: flex; align-items: flex-end; gap: calc(var(--k) * 2px); filter: drop-shadow(0 2px 0 rgba(0,0,0,.6)); }
+
+.h-scores { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -52%); min-width: min(94vw, calc(var(--k) * 250px));
+  padding: calc(var(--k) * 6px) calc(var(--k) * 8px); background: rgba(8, 4, 3, .93); border: 1px solid rgba(255, 110, 60, .25); border-radius: 6px; z-index: 2;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.h-scores .row { display: grid; grid-template-columns: calc(var(--k) * 18px) minmax(calc(var(--k) * 90px), 1fr) calc(var(--k) * 34px) calc(var(--k) * 40px) calc(var(--k) * 30px); align-items: center; gap: calc(var(--k) * 3px); padding: calc(var(--k) * 0.5px) calc(var(--k) * 2px); border-radius: 3px; }
+.h-scores .row.me { background: rgba(255, 190, 60, .14); }
+.h-scores .row.gap { height: calc(var(--k) * 3px); padding: 0; }
+.h-scores .row .r { justify-self: end; }
+.h-scores .name { display: flex; align-items: center; gap: calc(var(--k) * 3px); min-width: 0; overflow: hidden; }
+.h-scores .sw { width: calc(var(--k) * 5px); height: calc(var(--k) * 5px); border-radius: 1px; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.h-scores .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: calc(var(--k) * 4px); }
+
+.h-chat { position: absolute; left: calc(var(--k) * 4px); bottom: calc(var(--k) * 40px); display: flex; align-items: center; gap: 6px; pointer-events: auto; }
+.h-chat input { width: min(60vw, 520px); padding: 6px 10px; font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.7);
+  border: 1px solid rgba(255, 110, 60, .5); border-radius: 3px; outline: none; }
+.h-net { position: absolute; left: 50%; top: calc(var(--k) * 26px); transform: translateX(-50%); padding: 6px 14px; border-radius: 3px;
+  background: rgba(120, 10, 4, .85); color: #fff; font-weight: 600; letter-spacing: .04em; }
+
+/* Esc menu */
+.pause { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(5, 2, 2, .62); backdrop-filter: blur(2px); }
+.pause .box { width: min(440px, calc(100vw - 32px)); padding: 26px 28px 22px; border-radius: 8px; background: rgba(16, 10, 9, .96); border: 1px solid rgba(255, 130, 70, .3); box-shadow: 0 30px 80px rgba(0,0,0,.7); }
+.pause .skull { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.pause .skull canvas { width: auto; height: 40px; image-rendering: pixelated; }
+.pause .skull h2 { margin: 0; font: 800 18px/1 "Bahnschrift", "Oswald", "Arial Narrow", sans-serif; letter-spacing: .24em; text-transform: uppercase; color: #f2c14e; }
+.pause .buttons { display: flex; flex-direction: column; gap: 8px; }
+.pause .opt { display: grid; grid-template-columns: 1fr 160px 44px; align-items: center; gap: 10px; margin: 6px 0; font-size: 14px; color: #ddd; }
+.pause .opt output { text-align: right; color: #aaa; font-variant-numeric: tabular-nums; }
+.pause .opt input[type=range] { accent-color: #e0261a; }
+.pause .opt.check { grid-template-columns: 1fr auto; }
+.pause .opts { margin: 4px 0 16px; padding: 12px 0; border-top: 1px solid rgba(255,255,255,.08); border-bottom: 1px solid rgba(255,255,255,.08); }
+.pause .seg { display: inline-flex; border: 1px solid rgba(255,130,70,.35); border-radius: 4px; overflow: hidden; }
+.pause .seg button { padding: 5px 10px; background: transparent; border: 0; color: #ccc; font-size: 13px; }
+.pause .seg button[aria-pressed="true"] { background: #9b0c06; color: #fff; }

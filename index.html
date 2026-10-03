@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Freedoom Deathmatch</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="64-player Doom deathmatch in your browser. Free game data from the Freedoom project.">
+<style>
+  /* Paint the frame before the bundle arrives: no white flash, no layout jump. */
+  html, body { margin: 0; height: 100%; background: #0b0706; color: #e8dccb; overflow: hidden; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="view"></div>
+  <div id="hud" class="hidden"></div>
+
+  <main id="menu" class="screen">
+    <canvas id="backdrop" aria-hidden="true"></canvas>
+
+    <header class="topbar">
+      <div id="account" class="account" aria-live="polite"></div>
+    </header>
+
+    <section class="hero" aria-label="Your marine">
+      <div class="stage">
+        <div id="doomguy" class="doomguy-host"></div>
+        <div class="pad" aria-hidden="true"></div>
+      </div>
+      <div class="ident">
+        <label for="name">Your name</label>
+        <input id="name" type="text" maxlength="20" autocomplete="nickname" spellcheck="false">
+        <div id="swatches" class="swatches" role="radiogroup" aria-label="Armor color"></div>
+        <div id="color-name" class="color-name"></div>
+      </div>
+    </section>
+
+    <section class="play" aria-label="Play">
+      <h1 class="logo">
+        <canvas id="logo" width="189" height="70" aria-hidden="true"></canvas>
+        <span class="logo-text">Freedoom <b>Deathmatch</b></span>
+      </h1>
+      <p class="tag">Up to 64 players on <span id="map-title"></span>. Jump in any time.</p>
+
+      <div class="actions">
+        <button id="quickplay" class="btn primary" type="button">Quick Play</button>
+        <button id="offline" class="btn ghost" type="button">Play offline with bots</button>
+      </div>
+
+      <div class="servers panel">
+        <div class="panel-head">
+          <h2>Servers</h2>
+          <span id="rooms-status" class="muted"></span>
+        </div>
+        <div class="srv-cols" aria-hidden="true"><span>Room</span><span>Map</span><span>Players</span><span>Up</span><span></span></div>
+        <div id="rooms" class="srv-list"></div>
+        <form id="custom" class="custom" autocomplete="off">
+          <input id="room" type="text" maxlength="32" placeholder="Or type a room name to start your own" aria-label="Room name" spellcheck="false">
+          <button class="btn small" type="submit">Join room</button>
+        </form>
+      </div>
+      <p id="error" class="error" role="alert"></p>
+    </section>
+
+    <footer class="foot">
+      <button id="controls-btn" class="link" type="button">Controls</button>
+      <span class="sep">·</span>
+      <a href="LICENSE.txt" target="_blank" rel="noopener">License (GPL-2.0)</a>
+      <span class="sep">·</span>
+      <a href="COPYING-FREEDOOM.txt" target="_blank" rel="noopener">Freedoom license</a>
+      <span class="sep">·</span>
+      <a href="CREDITS-FREEDOOM.txt" target="_blank" rel="noopener">Credits</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/m0dE/doom-arrr" target="_blank" rel="noopener">Source code</a>
+      <span class="sep">·</span>
+      <a href="source.zip" download>source.zip</a>
+      <span class="sep">·</span>
+      <span class="muted" id="build"></span>
+    </footer>
+  </main>
+
+  <div id="loading" class="screen loading hidden" aria-live="polite">
+    <div class="loading-box">
+      <div id="loading-label">Entering the arena</div>
+      <div class="bar"><i id="loading-bar"></i></div>
+    </div>
+  </div>
+
+  <dialog id="controls" class="dialog">
+    <h2>Controls</h2>
+    <dl class="keys">
+      <dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows</dd>
+      <dt>Look</dt><dd>Mouse</dd>
+      <dt>Fire</dt><dd>Left click</dd>
+      <dt>Open doors, press switches</dt><dd><kbd>E</kbd> or <kbd>Ctrl</kbd></dd>
+      <dt>Jump</dt><dd><kbd>Space</kbd></dd>
+      <dt>Walk</dt><dd>Hold <kbd>Shift</kbd></dd>
+      <dt>Weapons</dt><dd><kbd>1</kbd>–<kbd>7</kbd>, mouse wheel, <kbd>Q</kbd> for the previous one</dd>
+      <dt>Scores</dt><dd>Hold <kbd>Tab</kbd></dd>
+      <dt>Chat</dt><dd><kbd>T</kbd> or <kbd>Enter</kbd></dd>
+      <dt>Menu</dt><dd><kbd>Esc</kbd></dd>
+    </dl>
+    <form method="dialog"><button class="btn small" type="submit">Close</button></form>
+  </dialog>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

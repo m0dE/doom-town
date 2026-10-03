@@ -1,0 +1,796 @@
+/**
+ * A match: the lockstep session, the rings it records, and the frame loop
+ * that turns `lockstep.view(now)` into a RenderFrame, sounds and the HUD.
+ *
+ * The rules (harness/INTEGRATION.md, sdk/docs/lockstep.md):
+ *   - ONE clock: `view(now)` at the rAF timestamp, once per frame; nothing
+ *     drawn is timed from anything else.
+ *   - everyone else from the CONFIRMED ring at `frame + alpha`;
+ *   - the local player from the PREDICTED ring at `predictedFrame - 1 +
+ *     selfAlpha` (the camera), with the mouse's own yaw/pitch so the view
+ *     turns on the frame the mouse moves;
+ *   - bodies are never extrapolated; a jump of more than 64 units in one tic
+ *     (respawn, teleport) is drawn as a cut, not a line across the map;
+ *     projectiles alone run on along their momentum.
+ *   - rings are recorded from the tick callbacks, keyed by absolute frame.
+ *
+ * Sounds: the local player's own weapon sounds come off the predicted world
+ * (so a shot is heard on the click), once per frame however often a rollback
+ * replays it; everything else off confirmed frames, once each.
+ */
+import { lockstep, type IdentitySession } from 'arrr-network';
+import { loadSim, loadWad } from './assets.js';
+import { createDoomApp, encodeCmd, type DoomApp, type DoomState } from '../sim/doomsim.js';
+import {
+  EVENT_WORDS, EV_MATCH_END, EV_MATCH_START, EV_OBITUARY, EV_PICKUP, EV_SOUND, EV_SWITCH,
+  MF_MISSILE, MOBJ_WORDS, M_ANGLE, M_FLAGS, M_ID, M_MOMX, M_MOMY, M_SPRITE, M_TYPE, M_X, M_Y, M_Z,
+  PV, ROW_WORDS, R_DEATHS, R_FRAGS, R_HUMAN, R_COLOR,
+} from '../sim/abi.js';
+import { MAP_LUMP, MATCH_TICS, INTERMISSION_TICS, SLOTS, TICRATE } from '../sim/map.js';
+import { NetSession } from '../net/session.js';
+import { APP_ID, API_KEY } from '../menu/rooms.js';
+import { Input, MAX_PITCH } from '../input/input.js';
+import { TicRing } from './ring.js';
+import { Gfx } from '../hud/gfx.js';
+import { Hud, type ScoreRow } from '../hud/hud.js';
+import { FaceWidget, pointToAngle } from '../hud/face.js';
+import { obituaryTemplate, pickupMessage } from '../hud/strings.js';
+import { botColor, clampColor, PLAYER_COLORS } from './colors.js';
+import { botNames, botPing } from './names.js';
+import { GameSound, type SoundOut } from './sound.js';
+import { AutomapView, type WorldView } from './automap.js';
+import { Renderer } from '../render/index.js';
+import { PauseMenu } from './pause.js';
+import { prefs, savePrefs, cleanName } from '../menu/prefs.js';
+import { parseMap, SPRITE_NAMES, type Wad } from '../wad/index.js';
+import type { RenderEvent, RenderFrame, RenderMobj, RenderSector } from '../render/types.js';
+
+const { renderTimes } = lockstep;
+const FRAC = 1 / 65536;
+const BAM = (2 * Math.PI) / 4294967296;
+/** A body that moved more than this in one tic teleported (DESIGN: 64 units). */
+const TELEPORT = 64 * 65536;
+/** Snapshots: every 10 s of tics (DESIGN "Netcode numbers"). */
+const SNAPSHOT_EVERY = TICRATE * 10;
+
+export interface GameOptions {
+  room: string;
+  offline: boolean;
+  name: string;
+  color: number;
+  identity?: IdentitySession;
+  central?: string;
+  nodeUrl?: string;
+  host: HTMLElement;
+  hud: HTMLElement;
+}
+
+/** One confirmed frame, as the loop keeps it. */
+interface Snap {
+  mobjs: Int32Array;
+  rows: Int32Array;
+  sectors: Int32Array;
+  /** Our PlayerView, when we have a slot. */
+  me: Int32Array | null;
+  mySlot: number;
+  ids: string[];
+  /** id → index into `mobjs`, built on first use. */
+  index?: Map<number, number>;
+}
+
+function indexOf(s: Snap): Map<number, number> {
+  if (s.index) return s.index;
+  const m = new Map<number, number>();
+  for (let i = 0, n = s.mobjs.length / MOBJ_WORDS; i < n; i++) m.set(s.mobjs[i * MOBJ_WORDS + M_ID], i);
+  s.index = m;
+  return m;
+}
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+/** Shortest-way interpolation of BAM angles, to radians. */
+function lerpAngle(a: number, b: number, t: number): number {
+  const d = ((b - a) | 0);           // signed BAM difference
+  return (((a >>> 0) + d * t) * BAM) % (2 * Math.PI);
+}
+
+function playerId(identity?: IdentitySession): string {
+  if (identity) return identity.userId;
+  try {
+    const have = sessionStorage.getItem('freedm.pid');
+    if (have) return have;
+    const id = (crypto.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, '').slice(0, 16);
+    sessionStorage.setItem('freedm.pid', id);
+    return id;
+  } catch {
+    return `p${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
+
+/** A frame that touches every material: the world, a marine, a weapon. */
+function warmupFrame(wad: Wad): RenderFrame {
+  const map = parseMap(MAP_LUMP, wad.mapLumps(MAP_LUMP));
+  const start = map.things.find((t) => t.type === 1) ?? map.things[0] ?? { x: 0, y: 0, angle: 0 };
+  const play = SPRITE_NAMES.indexOf('PLAY'), pisg = SPRITE_NAMES.indexOf('PISG');
+  return {
+    tic: 0,
+    camera: { x: start.x, y: start.y, z: 41, yaw: (start.angle * Math.PI) / 180, pitch: 0 },
+    mobjs: [{ id: 1, x: start.x + Math.cos((start.angle * Math.PI) / 180) * 96, y: start.y + Math.sin((start.angle * Math.PI) / 180) * 96, z: 0, angle: 0, sprite: play, frame: 0, flags: 0, type: 0, slot: 1, translation: 3 }],
+    mobjCount: 1,
+    sectors: null,
+    lineTextures: null,
+    player: { damagecount: 0, bonuscount: 0, extralight: 0, fixedcolormap: 0, powers: [0, 0, 0, 0, 0, 0], weapon: { sprite: pisg, frame: 0, sx: 0, sy: 32 }, flash: null },
+    events: [],
+  };
+}
+
+/** A renderer built while the menu is up, so Play does not wait on the atlas and the shaders. */
+let warm: { canvas: HTMLCanvasElement; renderer: Renderer } | null = null;
+
+export class Game {
+  /**
+   * Build the 3D view ahead of time (from the start screen, when the WAD is in).
+   * Best effort: if WebGL is not there, the match makes its own fallback later.
+   */
+  static async prewarm(): Promise<void> {
+    if (warm) return;
+    const wad = await loadWad();
+    if (warm) return;
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
+    const t0 = performance.now();
+    try {
+      const renderer = new Renderer(canvas, wad, MAP_LUMP, { fov: prefs().fov });
+      // One frame now compiles every shader, which is otherwise the first frame of the match.
+      renderer.setFrame(warmupFrame(wad));
+      renderer.render();
+      warm = { canvas, renderer };
+    } catch { warm = null; }
+    console.info(`[render] 3D view ready in ${Math.round(performance.now() - t0)} ms`);
+  }
+
+  onLeave: (() => void) | null = null;
+
+  readonly id: string;
+  readonly net: NetSession;
+  readonly app: DoomApp;
+  private readonly input: Input;
+  private readonly hud: Hud;
+  private readonly sound: SoundOut;
+  private view: WorldView;
+  private readonly pause: PauseMenu;
+
+  private readonly confirmed = new TicRing<Snap>(96);
+  private readonly selfRing = new TicRing<Int32Array>(96);
+  private lines: Int32Array | null = null;
+  private mySlot = -1;
+  private raf = 0;
+  private lastT = 0;
+  private disposed = false;
+
+  // events
+  private lastEventFrame = -1;
+  private lastPredSoundFrame = -1;
+  private predictedAt = 0;
+  private readonly pending: RenderEvent[] = [];
+  private readonly sentAngle = new Map<number, number>();
+  private yawOffset = 0;
+  private wasDead = false;
+
+  // people
+  private readonly names = new Map<string, string>();
+  private readonly colors = new Map<string, number>();
+  private readonly pings = new Map<string, number>();
+  private readonly bots: string[];
+  private killer: string | null = null;
+  private lastObitAt = 0;
+  private helloAt = 0;
+  private pingAt = 0;
+
+  // hud
+  private readonly face = new FaceWidget();
+  private faceAcc = 0;
+  private faceTic = 0;
+
+  // the reused RenderFrame
+  private readonly frame: RenderFrame;
+  private readonly mobjPool: RenderMobj[] = [];
+  private readonly sectorPool: RenderSector[] = [];
+
+  static async start(opts: GameOptions, progress: (label: string, frac: number) => void): Promise<Game> {
+    progress('Loading', 0.1);
+    const [wad, sim] = await Promise.all([loadWad(), loadSim()]);
+    progress('Connecting', 0.6);
+    const g = new Game(opts, wad, createDoomApp(sim));
+    try {
+      await g.net.start();
+    } catch (err) {
+      g.dispose();
+      throw err;
+    }
+    progress('Ready', 1);
+    g.loop();
+    return g;
+  }
+
+  private constructor(private readonly opts: GameOptions, private readonly wad: Wad, app: DoomApp) {
+    this.app = app;
+    this.id = playerId(opts.identity);
+    this.names.set(this.id, opts.name);
+    this.colors.set(this.id, clampColor(opts.color));
+    this.bots = botNames(opts.room, SLOTS);
+    const gfx = new Gfx(wad);
+    const p = prefs();
+
+    // the world view: three.js, or the automap where WebGL will not start
+    this.view = this.makeView(wad, app, p.fov);
+    opts.host.append(this.view.canvas);
+    this.resize();
+    addEventListener('resize', this.resize);
+
+    this.hud = new Hud(opts.hud, gfx);
+    opts.hud.classList.remove('hidden');
+    this.sound = new GameSound(wad);
+    this.sound.setVolume(p.volume);
+
+    this.pause = new PauseMenu(gfx, {
+      resume: () => this.resume(),
+      leave: () => this.onLeave?.(),
+      changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); },
+    });
+
+    this.input = new Input(this.view.canvas, {
+      onMenu: () => this.openPause(),
+      onScoreboard: (on) => this.hud.showScores(on),
+      onChat: () => this.openChat(),
+      keyboardCaptured: () => this.hud.chatting || this.pause.open,
+    });
+    this.input.settings = { sensitivity: p.sensitivity, invertY: p.invertY };
+
+    this.frame = {
+      tic: 0,
+      camera: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
+      mobjs: this.mobjPool,
+      mobjCount: 0,
+      viewMobjId: 0,
+      sectors: this.sectorPool,
+      lineTextures: null,
+      player: null,
+      events: [],
+      eventCount: 0,
+    };
+
+    this.net = new NetSession({
+      app,
+      room: opts.room,
+      appId: APP_ID,
+      apiKey: API_KEY,
+      centralServiceUrl: opts.central,
+      nodeUrl: opts.nodeUrl,
+      playerId: this.id,
+      playerName: opts.name,
+      ...(opts.identity ? { identity: opts.identity } : {}),
+      offline: opts.offline,
+      snapshotEvery: SNAPSHOT_EVERY,
+      makeInput: (ctx) => this.makeInput(ctx),
+      onConfirmedTick: (s, f) => this.onConfirmed(s, f),
+      onPredictedTick: (s, f) => this.onPredicted(s, f),
+    });
+    this.net.onAppMessage = (player, data) => this.onAppMessage(player, data);
+    this.net.onJoin = (player, name) => {
+      if (!this.names.has(player)) this.names.set(player, cleanName(name) || 'Player');
+      // A newcomer has none of our app messages: say who we are again, soon.
+      if (player !== this.id) this.helloAt = Math.min(this.helloAt, performance.now() + 500 + Math.random() * 1500);
+    };
+  }
+
+  private readonly disposers: (() => void)[] = [];
+
+  // ------------------------------------------------------------------ the stream
+
+  private makeInput(ctx?: lockstep.SimContext): unknown {
+    const cmd = this.input.cmd();
+    if (ctx) {
+      this.sentAngle.set(ctx.frame, cmd.angle);
+      if (this.sentAngle.size > 256) for (const k of this.sentAngle.keys()) { if (k < ctx.frame - 200) this.sentAngle.delete(k); else break; }
+    }
+    return encodeCmd(cmd);
+  }
+
+  private onConfirmed(s: DoomState, f: number): void {
+    const sim = this.app.sim;
+    const slot = s.ids.indexOf(this.id);
+    this.mySlot = slot;
+    const snap: Snap = {
+      mobjs: sim.mobjs(s.h),
+      rows: sim.players(s.h),
+      sectors: sim.sectors(s.h),
+      me: slot >= 0 ? sim.player(s.h, slot) : null,
+      mySlot: slot,
+      ids: s.ids.slice(),
+    };
+    this.confirmed.record(f, snap);
+    if (!this.lines) this.lines = sim.lines(s.h);
+    if (f <= this.lastEventFrame) return;
+    this.lastEventFrame = f;
+    const ev = s.ev;
+    let switched = false;
+    // A catch-up replays history: its frames happened before we were here.
+    const live = !this.net.lockstep.catchup.active;
+    for (let i = 0; i < ev.length; i += EVENT_WORDS) {
+      const kind = ev[i];
+      if (kind === EV_SWITCH) switched = true;
+      if (!live) continue;
+      this.pushEvent(ev, i);
+      this.confirmedEvent(ev, i, snap);
+    }
+    if (switched) this.lines = sim.lines(s.h);
+  }
+
+  private onPredicted(s: DoomState, f: number): void {
+    const slot = s.ids.indexOf(this.id);
+    if (slot < 0) return;
+    const pv = this.app.sim.player(s.h, slot);
+    this.selfRing.record(f, pv);
+    this.predictedAt = performance.now();
+    const sent = this.sentAngle.get(f);
+    if (sent !== undefined) this.yawOffset = ((pv[PV.angle] >>> 0) - ((sent << 16) >>> 0)) >>> 0;
+    // Our own weapon, heard on the frame it was predicted - once, whatever a rollback replays.
+    if (f > this.lastPredSoundFrame) {
+      this.lastPredSoundFrame = f;
+      const ev = s.ev;
+      for (let i = 0; i < ev.length; i += EVENT_WORDS) {
+        if (ev[i] === EV_SOUND && ev[i + 7] === slot + 1) this.sound.play(ev[i + 1], ev[i + 2], ev[i + 4] * FRAC, ev[i + 5] * FRAC, ev[i + 3], true);
+      }
+    }
+  }
+
+  private pushEvent(ev: Int32Array, i: number): void {
+    if (this.pending.length > 512) return;
+    this.pending.push({ kind: ev[i], a: ev[i + 1], b: ev[i + 2], c: ev[i + 3], x: ev[i + 4] * FRAC, y: ev[i + 5] * FRAC, z: ev[i + 6] * FRAC, d: ev[i + 7] });
+  }
+
+  private confirmedEvent(ev: Int32Array, i: number, snap: Snap): void {
+    const kind = ev[i], a = ev[i + 1], b = ev[i + 2], c = ev[i + 3];
+    const me = snap.mySlot;
+    switch (kind) {
+      case EV_SOUND: {
+        const own = me >= 0 && ev[i + 7] === me + 1;
+        // Ours was played off the prediction, unless there is none right now.
+        if (own && performance.now() - this.predictedAt < 500) return;
+        this.sound.play(a, b, ev[i + 4] * FRAC, ev[i + 5] * FRAC, c, own);
+        return;
+      }
+      case EV_OBITUARY: {
+        const victim = this.slotName(a, snap), killer = b >= 0 ? this.slotName(b, snap) : null;
+        const tpl = obituaryTemplate(c, b === a, b < 0);
+        const pieces: [string, string | undefined][] = [];
+        for (const part of tpl.split(/(%o|%k)/)) {
+          if (part === '%o') pieces.push([victim, this.slotCss(a, snap)]);
+          else if (part === '%k') pieces.push([killer ?? '', b >= 0 ? this.slotCss(b, snap) : undefined]);
+          else if (part) pieces.push([part, undefined]);
+        }
+        // 64 players frag several times a second: every line of yours is shown,
+        // others' at a readable pace (humans' more often than bots').
+        const mine = a === me || b === me;
+        const human = !!snap.ids[a] || (b >= 0 && !!snap.ids[b]);
+        const now = performance.now();
+        if (mine || now - this.lastObitAt > (human ? 800 : 2200)) {
+          if (!mine) this.lastObitAt = now;
+          this.hud.obituary(pieces, mine);
+        }
+        if (a === me) this.killer = b >= 0 && b !== a ? killer : null;
+        return;
+      }
+      case EV_PICKUP:
+        if (a === me) {
+          const msg = pickupMessage(b, snap.me ? snap.me[PV.health] : 100);
+          if (msg) this.hud.message(msg);
+        }
+        return;
+      case EV_MATCH_START:
+        this.hud.message('A new match begins. Fight!', '#ffd25a');
+        return;
+      case EV_MATCH_END:
+        if (a >= 0) this.hud.message(`${this.slotName(a, snap)} wins the match!`, '#ffd25a');
+        return;
+    }
+  }
+
+  private onAppMessage(player: string | null, data: unknown): void {
+    if (!player || typeof data !== 'object' || data === null) return;
+    const d = data as { n?: unknown; col?: unknown; say?: unknown; ping?: unknown };
+    if (typeof d.n === 'string') { const n = cleanName(d.n); if (n) this.names.set(player, n); }
+    if (d.col !== undefined) this.colors.set(player, clampColor(d.col));
+    if (typeof d.ping === 'number' && Number.isFinite(d.ping)) this.pings.set(player, Math.max(0, Math.min(9999, Math.round(d.ping))));
+    if (typeof d.say === 'string' && d.say.trim()) {
+      const snap = this.confirmed.latest();
+      const slot = snap ? snap.ids.indexOf(player) : -1;
+      this.hud.chat(this.names.get(player) ?? 'Player', d.say.trim().slice(0, 120), slot >= 0 ? this.slotColor(slot, snap!) : 0);
+    }
+  }
+
+  // ------------------------------------------------------------------ people
+
+  private slotName(slot: number, snap: Snap): string {
+    const id = snap.ids[slot];
+    if (id) return this.names.get(id) ?? 'Player';
+    return this.bots[slot] ?? `Bot ${slot}`;
+  }
+
+  private slotColor(slot: number, snap: Snap): number {
+    const id = snap.ids[slot];
+    if (id) return this.colors.get(id) ?? clampColor(snap.rows[slot * ROW_WORDS + R_COLOR]);
+    return botColor(slot);
+  }
+
+  private slotCss(slot: number, snap: Snap): string {
+    return PLAYER_COLORS[this.slotColor(slot, snap)]?.css ?? '#ffffff';
+  }
+
+  private slotPing(slot: number, snap: Snap, now: number): number {
+    const id = snap.ids[slot];
+    if (!id) return botPing(this.opts.room, slot, now);
+    if (id === this.id) return Math.round(this.net.lockstep.roundTripMs ?? 0);
+    return this.pings.get(id) ?? 0;
+  }
+
+  // ------------------------------------------------------------------ the frame
+
+  private loop(): void {
+    const tick = (now: number): void => {
+      if (this.disposed) return;
+      this.raf = requestAnimationFrame(tick);
+      try { this.draw(now); } catch (err) { console.error(err); }
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  /** Frames drawn, and when the count started: the page's frame rate for tests and the debug line. */
+  private drawn = 0;
+  private drawnSince = 0;
+
+  private draw(now: number): void {
+    if (!this.drawnSince) this.drawnSince = now;
+    this.drawn++;
+    const dt = this.lastT ? Math.min(0.1, (now - this.lastT) / 1000) : 0;
+    this.lastT = now;
+    this.input.update(dt);
+    this.chatter(now);
+
+    const v = this.net.lockstep.view(now);
+    const t = renderTimes(v);
+    const snapPair = t ? this.confirmed.pair(t.others) : null;
+    if (!t || !snapPair) {
+      this.hud.update({ pv: null, face: 0, color: 0, frags: 0, rank: 0, total: SLOTS, timeLeft: 0, intermission: false, dead: false, respawnReady: false, killer: null, locked: this.input.locked, style: prefs().hud, net: this.net.statusText === 'Connected' || this.net.statusText === 'Offline' ? 'Joining…' : this.net.statusText }, now);
+      return;
+    }
+    const { a, b, frac } = snapPair;
+    const f = this.frame;
+    f.tic = t.others;
+
+    // --- the local player: predicted ring at `self`, or the confirmed one until it arms
+    let pv: Int32Array | null = null, pvB: Int32Array | null = null, pvFrac = 0;
+    if (t.drawSelfFromPrediction) {
+      const sp = this.selfRing.pair(t.self);
+      if (sp) { pv = sp.a; pvB = sp.b; pvFrac = sp.frac; }
+    }
+    if (!pv) {
+      const cp = this.confirmed.pair(t.self);
+      if (cp?.a.me) { pv = cp.a.me; pvB = cp.b.me ?? cp.a.me; pvFrac = cp.frac; }
+    }
+
+    // --- camera
+    const cam = f.camera;
+    const dead = !!pv && pv[PV.state] !== 0;
+    if (pv && pvB) {
+      const jump = Math.abs(pvB[PV.x] - pv[PV.x]) > TELEPORT || Math.abs(pvB[PV.y] - pv[PV.y]) > TELEPORT || Math.abs(pvB[PV.viewz] - pv[PV.viewz]) > TELEPORT;
+      const k = jump ? (pvFrac < 0.5 ? 0 : 1) : pvFrac;
+      cam.x = lerp(pv[PV.x], pvB[PV.x], k) * FRAC;
+      cam.y = lerp(pv[PV.y], pvB[PV.y], k) * FRAC;
+      cam.z = lerp(pv[PV.viewz], pvB[PV.viewz], k) * FRAC;
+      if (dead) {
+        cam.yaw = lerpAngle(pv[PV.angle], pvB[PV.angle], k);
+        cam.pitch = 0;
+      } else {
+        cam.yaw = (this.input.yaw + (this.yawOffset >>> 0) * BAM) % (2 * Math.PI);
+        cam.pitch = this.input.pitch;
+      }
+      if (this.wasDead && !dead) this.input.pitch = 0;   // a respawn looks straight ahead
+      this.wasDead = dead;
+      f.viewMobjId = pv[PV.mobj];
+      const ps = (word: number, sxw: number): { sprite: number; frame: number; sx: number; sy: number } | null => {
+        const s = (k < 0.5 ? pv! : pvB!)[word];
+        if (s === -1) return null;
+        return { sprite: s & 0xffff, frame: s >>> 16, sx: lerp(pv![sxw], pvB![sxw], k) * FRAC, sy: lerp(pv![sxw + 1], pvB![sxw + 1], k) * FRAC };
+      };
+      const cur = k < 0.5 ? pv : pvB;
+      f.player = {
+        damagecount: cur[PV.damagecount], bonuscount: cur[PV.bonuscount], extralight: cur[PV.extralight], fixedcolormap: cur[PV.fixedcolormap],
+        powers: cur.subarray(PV.powers, PV.powers + 6),
+        weapon: dead ? null : ps(PV.psWeapon, PV.psWeaponSx),
+        flash: dead ? null : ps(PV.psFlash, PV.psFlashSx),
+      };
+    } else {
+      f.player = null;
+      f.viewMobjId = 0;
+    }
+
+    // --- everyone else, confirmed at `others`
+    const ia = indexOf(a);
+    const nb = b.mobjs.length / MOBJ_WORDS;
+    let count = 0;
+    for (let j = 0; j < nb; j++) {
+      const ob = j * MOBJ_WORDS;
+      const id = b.mobjs[ob + M_ID];
+      const ja = ia.get(id);
+      const A = ja === undefined ? b.mobjs : a.mobjs;
+      const oa = ja === undefined ? ob : ja * MOBJ_WORDS;
+      const B = b.mobjs;
+      const m = this.mobjPool[count] ?? (this.mobjPool[count] = { id: 0, x: 0, y: 0, z: 0, angle: 0, sprite: 0, frame: 0, flags: 0, type: 0, slot: -1, translation: 0 });
+      count++;
+      const missile = (B[ob + M_FLAGS] & MF_MISSILE) !== 0;
+      const jump = Math.abs(B[ob + M_X] - A[oa + M_X]) > TELEPORT || Math.abs(B[ob + M_Y] - A[oa + M_Y]) > TELEPORT || Math.abs(B[ob + M_Z] - A[oa + M_Z]) > TELEPORT;
+      const k = jump ? (frac < 0.5 ? 0 : 1) : frac;
+      m.id = id;
+      if (ja === undefined && missile && frac > 0) {
+        // Only the later frame has it: it was fired this tic. A projectile is a
+        // computable straight line, so it may run back along its momentum.
+        m.x = (B[ob + M_X] - B[ob + M_MOMX] * (1 - frac)) * FRAC;
+        m.y = (B[ob + M_Y] - B[ob + M_MOMY] * (1 - frac)) * FRAC;
+      } else {
+        m.x = lerp(A[oa + M_X], B[ob + M_X], k) * FRAC;
+        m.y = lerp(A[oa + M_Y], B[ob + M_Y], k) * FRAC;
+      }
+      m.z = lerp(A[oa + M_Z], B[ob + M_Z], k) * FRAC;
+      m.angle = lerpAngle(A[oa + M_ANGLE], B[ob + M_ANGLE], k);
+      const src = k < 0.5 ? A : B, so = k < 0.5 ? oa : ob;
+      m.sprite = src[so + M_SPRITE] & 0xffff;
+      m.frame = src[so + M_SPRITE] >>> 16;
+      m.flags = src[so + M_FLAGS];
+      const type = B[ob + M_TYPE];
+      m.type = type & 0xffff;
+      m.slot = (type >>> 16) - 1;
+      m.translation = m.slot >= 0 ? this.slotColor(m.slot, b) : 0;
+    }
+    f.mobjCount = count;
+
+    // --- sectors (doors and lifts move between tics too)
+    const ns = Math.min(a.sectors.length, b.sectors.length) / 5;
+    for (let i = 0; i < ns; i++) {
+      const s = this.sectorPool[i] ?? (this.sectorPool[i] = { floor: 0, ceil: 0, light: 0, floorpic: 0, ceilpic: 0 });
+      const o = i * 5;
+      s.floor = lerp(a.sectors[o], b.sectors[o], frac) * FRAC;
+      s.ceil = lerp(a.sectors[o + 1], b.sectors[o + 1], frac) * FRAC;
+      s.light = b.sectors[o + 2];
+      s.floorpic = b.sectors[o + 3];
+      s.ceilpic = b.sectors[o + 4];
+    }
+    this.sectorPool.length = ns;
+    f.lineTextures = this.lines;
+
+    // --- events since the last frame
+    f.events = this.pending.splice(0);
+    f.eventCount = (f.events as RenderEvent[]).length;
+
+    this.sound.frame(cam.x, cam.y, cam.yaw, this.mobjPool, count);
+    this.view.hudHeight(prefs().hud === 'bar' && f.player ? this.hud.barHeight : 0);
+    this.view.render(f);
+
+    // --- HUD
+    this.updateHud(now, dt, pv, b, dead);
+  }
+
+  private updateHud(now: number, dt: number, pv: Int32Array | null, snap: Snap, dead: boolean): void {
+    const me = snap.mySlot;
+    // face, ticked at 35 Hz off the drawn player
+    if (pv) {
+      this.faceAcc += dt * TICRATE;
+      let n = Math.min(4, Math.floor(this.faceAcc));
+      this.faceAcc -= Math.floor(this.faceAcc);
+      while (n-- > 0) {
+        const att = pv[PV.attacker] - 1;
+        let attackerAngle = 0;
+        if (att >= 0 && att !== me) {
+          const ia = indexOf(snap).get(snap.rows[att * ROW_WORDS + 2]);
+          if (ia !== undefined) attackerAngle = pointToAngle(pv[PV.x], pv[PV.y], snap.mobjs[ia * MOBJ_WORDS + M_X], snap.mobjs[ia * MOBJ_WORDS + M_Y]);
+        }
+        this.face.tick({
+          health: pv[PV.health], owned: pv[PV.owned], bonuscount: pv[PV.bonuscount], damagecount: pv[PV.damagecount],
+          attacked: att >= 0 && att !== me, angle: pv[PV.angle] >>> 0, attackerAngle,
+          attackDown: this.input.attacking, invulnerable: pv[PV.powers] > 0,
+        });
+        this.faceTic++;
+      }
+    }
+
+    // standings
+    const rows = snap.rows;
+    const order: number[] = [];
+    for (let s = 0; s < rows.length / ROW_WORDS; s++) order.push(s);
+    order.sort((x, y) => rows[y * ROW_WORDS + R_FRAGS] - rows[x * ROW_WORDS + R_FRAGS] || rows[x * ROW_WORDS + R_DEATHS] - rows[y * ROW_WORDS + R_DEATHS] || x - y);
+    const rank = me >= 0 ? order.indexOf(me) + 1 : 0;
+    if (this.scoresWanted(now)) {
+      const list: ScoreRow[] = order.map((s) => ({
+        slot: s, name: this.slotName(s, snap), color: this.slotColor(s, snap),
+        frags: rows[s * ROW_WORDS + R_FRAGS], deaths: rows[s * ROW_WORDS + R_DEATHS],
+        ping: this.slotPing(s, snap, Date.now()), me: s === me,
+      }));
+      this.hud.setRows(list);
+    }
+
+    const mt = pv ? pv[PV.matchTic] : 0;
+    const inter = !!pv && pv[PV.matchPhase] === 1;
+    const timeLeft = inter
+      ? (INTERMISSION_TICS - (mt >= MATCH_TICS ? mt - MATCH_TICS : mt)) / TICRATE
+      : (MATCH_TICS - mt) / TICRATE;
+    const st = this.net.statusText;
+    this.hud.update({
+      pv, face: this.face.index, color: this.colors.get(this.id) ?? 0,
+      frags: me >= 0 ? rows[me * ROW_WORDS + R_FRAGS] : 0, rank, total: rows.length / ROW_WORDS,
+      timeLeft, intermission: inter, dead, respawnReady: !!pv && pv[PV.respawnReady] === 1,
+      killer: dead ? this.killer : null,
+      locked: this.input.locked || this.pause.open,
+      style: prefs().hud,
+      net: st === 'Connected' || st === 'Offline' ? null : st,
+    }, now);
+    if (!dead) this.killer = null;
+    void R_HUMAN;
+  }
+
+  private scoresAt = 0;
+  /** The scoreboard's rows are rebuilt at 4 Hz, only while it can be seen. */
+  private scoresWanted(now: number): boolean {
+    if (now - this.scoresAt < 250) return false;
+    this.scoresAt = now;
+    return true;
+  }
+
+  /** Name/colour now and then, and when someone new arrives; our latency every 3 s. */
+  private chatter(now: number): void {
+    if (!this.net.lockstep.connected) return;
+    if (now >= this.helloAt) {
+      const p = prefs();
+      if (this.net.sendAppMessage({ n: this.names.get(this.id) ?? p.name, col: this.colors.get(this.id) ?? p.color })) this.helloAt = now + 15000;
+    }
+    if (now >= this.pingAt) {
+      this.pingAt = now + 3000;
+      const rtt = this.net.lockstep.roundTripMs;
+      if (rtt !== null && !this.net.offline) this.net.sendAppMessage({ ping: Math.round(rtt) });
+    }
+  }
+
+  // ------------------------------------------------------------------ menus
+
+  private openPause(): void {
+    if (this.pause.open || this.disposed) return;
+    this.input.setEnabled(false);
+    this.input.unlock();
+    this.pause.show();
+  }
+
+  private resume(): void {
+    this.pause.hide();
+    const np = prefs();
+    if (np.color !== this.colors.get(this.id) || np.name !== this.names.get(this.id)) {
+      this.colors.set(this.id, np.color);
+      this.names.set(this.id, np.name);
+      this.helloAt = 0;
+    }
+    this.input.setEnabled(true);
+    this.input.lock();
+  }
+
+  private openChat(): void {
+    this.input.setEnabled(false);
+    this.hud.openChat((text) => { this.net.sendAppMessage({ say: text }); }, () => {
+      if (this.pause.open) return;
+      this.input.setEnabled(true);
+      this.input.lock();
+    });
+  }
+
+  private makeView(wad: Wad, app: DoomApp, fov: number): WorldView {
+    const pre = warm;
+    warm = null;
+    const canvas = pre?.canvas ?? document.createElement('canvas');
+    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
+    try {
+      const r = pre?.renderer ?? new Renderer(canvas, wad, MAP_LUMP, { fov });
+      if (pre) r.setOptions({ fov });
+      r.setSimNameTables(app.sim.textureNames, app.sim.flatNames);
+      return {
+        canvas,
+        render: (f) => { r.setFrame(f); r.render(); },
+        resize: () => { /* the renderer follows its canvas */ },
+        hudHeight: (px) => r.setHudHeightPx(px),
+        setFov: (deg) => r.setOptions({ fov: deg }),
+        dispose: () => { r.dispose(); canvas.remove(); },
+      };
+    } catch (err) {
+      console.warn('[render] no 3D view, drawing the automap instead:', err);
+      return new AutomapView(parseMap(MAP_LUMP, wad.mapLumps(MAP_LUMP)));
+    }
+  }
+
+  private readonly resize = (): void => {
+    this.view.resize(innerWidth, innerHeight);
+  };
+
+  /** Leave: tell the room, stop everything, give the page back. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    removeEventListener('resize', this.resize);
+    for (const d of this.disposers) d();
+    this.input.setEnabled(false);
+    this.input.dispose();
+    try { this.net.leave(); } catch { /* already gone */ }
+    this.pause.dispose();
+    this.hud.dispose();
+    this.opts.hud.classList.add('hidden');
+    this.sound.dispose();
+    this.view.dispose();
+    this.confirmed.clear();
+    this.selfRing.clear();
+  }
+
+  // ------------------------------------------------------------------ tests
+
+  /** For Playwright: what the page is doing, in numbers. */
+  debug(): Record<string, unknown> {
+    const s = this.net.stats();
+    const snap = this.confirmed.latest();
+    const pv = snap?.me ?? null;
+    return {
+      ...s, slot: this.mySlot, frame: this.net.lockstep.frame,
+      pos: pv ? [pv[PV.x] >> 16, pv[PV.y] >> 16, pv[PV.z] >> 16] : null,
+      health: pv?.[PV.health] ?? null, frags: snap && this.mySlot >= 0 ? snap.rows[this.mySlot * ROW_WORDS + R_FRAGS] : null,
+      humans: snap ? snap.ids.filter(Boolean).length : 0,
+      clones: this.app.stats.clones, decodes: this.app.stats.decodes,
+      maxPitch: MAX_PITCH,
+      fps: this.drawn / Math.max(0.001, (performance.now() - this.drawnSince) / 1000),
+    };
+  }
+
+  /** For tests: steer without a mouse. */
+  testLook(yaw: number, pitch: number): void { this.input.face(yaw, pitch); }
+
+  /** For tests: hold an action ('forward', 'attack', 'jump', 'w3', ...). */
+  testHold(action: string, down: boolean): void { this.input.hold(action, down); }
+
+  /** For tests: every human in the room as the confirmed world has them. */
+  roster(): { id: string; slot: number; name: string; pos: number[] | null; frags: number; deaths: number }[] {
+    const snap = this.confirmed.latest();
+    if (!snap) return [];
+    const out = [];
+    const idx = indexOf(snap);
+    for (let s = 0; s < snap.ids.length; s++) {
+      const id = snap.ids[s];
+      if (!id) continue;
+      const mi = idx.get(snap.rows[s * ROW_WORDS + 2]);
+      out.push({
+        id, slot: s, name: this.slotName(s, snap),
+        pos: mi === undefined ? null : [snap.mobjs[mi * MOBJ_WORDS + M_X] >> 16, snap.mobjs[mi * MOBJ_WORDS + M_Y] >> 16, snap.mobjs[mi * MOBJ_WORDS + M_Z] >> 16],
+        frags: snap.rows[s * ROW_WORDS + R_FRAGS], deaths: snap.rows[s * ROW_WORDS + R_DEATHS],
+      });
+    }
+    return out;
+  }
+
+  /** For tests: total frags in the room, and the confirmed frame and hash. */
+  totals(): { frame: number; frags: number; hash: number | undefined } {
+    const snap = this.confirmed.latest();
+    let frags = 0;
+    if (snap) for (let s = 0; s < snap.rows.length / ROW_WORDS; s++) frags += snap.rows[s * ROW_WORDS + R_FRAGS];
+    const frame = this.net.lockstep.frame;
+    return { frame, frags, hash: this.net.lockstep.world.hashAt(frame - 2) };
+  }
+
+  savePlayer(name: string, color: number): void {
+    savePrefs({ name, color });
+    this.names.set(this.id, name);
+    this.colors.set(this.id, color);
+    this.helloAt = 0;
+  }
+}

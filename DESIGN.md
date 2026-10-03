@@ -1,19 +1,22 @@
 # Freedoom Deathmatch on ARRR — design
 
-A 100-player Doom deathmatch that runs in a web page, built to dogfood arrr-network.
+A 64-player Doom deathmatch that runs in a web page, built to dogfood arrr-network.
 This file is the contract between the three parts (sim, renderer, shell). Change it
 first, then the code.
 
 ## Licensing (read before copying anything)
 
-- **Engine code is GPL-2.0-or-later.** The simulation is a port of id Software's
-  linuxdoom-1.10 (GPL-2.0, github.com/id-Software/DOOM). Everything under
-  `games/doom/` is therefore GPL-2.0-or-later (`games/doom/LICENSE`), even though the
-  rest of this monorepo is MIT. Keep id's copyright notices in ported files' headers.
+- **Engine code is GPL-2.0.** The simulation is a port of id Software's
+  linuxdoom-1.10, "Licensed under the GNU General Public License 2.0" with no "or any
+  later version" (github.com/id-Software/DOOM README.TXT). Everything under
+  `games/doom/` is therefore distributed under GPL-2.0 (`games/doom/LICENSE`), even
+  though the rest of this monorepo is MIT. GPL-3-only material (GZDoom/UZDoom files)
+  cannot be combined with it. Keep id's copyright notices in ported files' headers.
 - **Game data is Freedoom / FreeDM 0.13.0** (BSD-3-Clause, `assets/COPYING-FREEDOOM.txt`,
   `assets/CREDITS-FREEDOOM.txt`). We never ship id's DOOM/DOOM2 WADs. A player may load
   their *own* DOOM2.WAD from disk (kept in their browser only) to get the original art;
   lump names are compatible, so this is only an art override.
+- No GZDoom/UZDoom-derived material: id's source is GPL-2.0-only, which is incompatible with their GPL-3 files.
 - **Name.** "DOOM" is id/ZeniMax's trademark. Player-facing title: **FREEDOOM
   DEATHMATCH** (short: "Freedoom DM"). Directory and code identifiers may say `doom`.
 - The published bundle carries `LICENSE.txt`, `COPYING-FREEDOOM.txt` and `source.zip`
@@ -25,7 +28,7 @@ first, then the code.
 ```
 games/doom/
   DESIGN.md              this file
-  LICENSE                GPL-2.0 text
+  LICENSE                GPL-2.0 text (id's own LICENSE.TXT)
   sim/                   Rust crate `doomsim` → wasm32 (no wasm-bindgen, raw C ABI)
   assets/                freedm.wad is NOT committed; tools/fetch-freedoom.mjs pins + downloads it
   tools/                 node scripts: fetch, pak builder, export, tests
@@ -50,11 +53,15 @@ without Rust), `npm run pak` (freedm.wad → `public/freedm-lite.wad`, committed
 
 - **Map:** FreeDM `MAP19` "DM19: Tech Isle" (8704×6656 units, the largest FreeDM map).
   The sim takes any map; the map name is a constant in one place (`src/sim/map.ts`).
-- **Slots:** `SLOTS = 100`. Every slot is always occupied: a bot plays it unless a human
+- **Slots:** `SLOTS = 64` (was 100; the user capped it at 64 on 2026-10-03). Every slot is always occupied: a bot plays it unless a human
   has it. A joining human takes over a bot's slot (lowest-index bot slot); leaving gives
   it back to a bot. Frags of a slot reset when it changes hands.
-- **Rules:** deathmatch 2 ("altdeath"): items and weapons are taken when picked up and
-  respawn 30 s later (`P_RespawnSpecials`). No monsters (things with MF_COUNTKILL are not
+- **Rules:** weapons stay (deathmatch 1's rule): a weapon on the map is never removed
+  when picked up, so the map always shows every weapon; a player who already owns that
+  weapon cannot take it again (vanilla `P_GiveWeapon` with `deathmatch == 1`, ammo
+  included). Everything else (ammo, health, armor, powerups, backpacks) is taken and
+  respawns 30 s later (`P_RespawnSpecials`). Weapons a dead player drops are not a
+  thing in vanilla and stay out. No monsters (things with MF_COUNTKILL are not
   spawned). Exits do nothing. Keys are irrelevant (locked doors open for anyone).
 - **Matches:** 10-minute rounds driven by the tic counter (`MATCH_TICS = 35*600`),
   then 10 s of intermission (scoreboard, everyone frozen), frags reset, everyone respawns.
@@ -62,7 +69,7 @@ without Rust), `npm run pak` (freedm.wad → `public/freedm-lite.wad`, committed
 - **Respawn:** a dead player respawns on attack/use after 1 s, forced after 5 s.
   Spawn point: random DM start / extra spawn point that passes `G_CheckSpot`
   (no telefrag) — the sim generates extra spawn points from the map (open floor
-  spots far from walls) because 10 DM starts are not enough for 100 players.
+  spots far from walls) because 10 DM starts are not enough for 64 players.
 - **Freelook + jump:** pitch is part of the input; hitscan and projectiles use the
   pitch slope (no vertical autoaim). Jump: `momz = 8*FRACUNIT` when on the ground,
   then Doom gravity. Max pitch ±(ANG90 * 0.9) is clamped in the sim.
@@ -96,6 +103,8 @@ map_load(wad_ptr, wad_len) -> i32      a PWAD holding exactly one map's lumps
                                        Returns map id >= 0, or a negative error code.
 sim_sprite_names() -> ptr              NUL-separated sprite names, Doom's sprnames order
 sim_sound_names() -> ptr               NUL-separated sound names, Doom's S_sfx order ("" for 0)
+                                       (every name list: each name NUL-terminated, then one
+                                       extra NUL; an empty name after the first ends the list)
 sim_version() -> u32                   bump on any change to sim behaviour or layout
 
 // worlds (a world is one full game state; several coexist: confirmed + predicted)
@@ -119,7 +128,11 @@ world_free_slot(h) -> i32              lowest bot-driven slot, -1 if none (who a
 // input — last command wins; held until replaced
 world_set_cmd(h, slot, angle_hi16, pitch, forward, side, buttons)
     angle_hi16: u32 0..65535, yaw = angle_hi16 << 16 (BAM)
-    pitch:      i32, BAM>>16 signed (-32768..32767 = -180°..180°), sim clamps
+    pitch:      i32, BAM>>16 signed (-32768..32767 = -180°..180°), sim clamps;
+                positive = looking up
+    The body's angle is (angle_hi16 << 16) + a per-player yaw offset that the sim sets
+    when it turns the body itself (spawn facing, teleport exit, punch/chainsaw pull), so
+    absolute mouse yaw keeps working: PlayerView[7] is the effective angle.
     forward:    i32 -50..50 (Doom forwardmove units; run = 50, walk = 25)
     side:       i32 -40..40 (sidemove units; run = 40, walk = 24)
     buttons:    bit0 attack, bit1 use, bit2 jump, bits 4..7 weapon select (0 = none,
@@ -169,32 +182,80 @@ world_events(h) -> ptr                 events emitted by the LAST world_tick onl
 15..18 ammo[4]  19..22 maxammo[4]
 23..28 powers[6] (tics remaining; invuln, strength, invis, ironfeet, allmap, infrared)
 29 damagecount  30 bonuscount  31 extralight  32 fixedcolormap
-33 frags (total kills of others)  34 deaths  35 attacker slot+1 (who hurt us last; 0 none)
+33 frags (kills of others minus suicides/world deaths, vanilla scoring)  34 deaths  35 attacker slot+1 (who hurt us last; 0 none)
 36 psprite weapon: sprite | frame<<16 (-1 if none)  37 sx fixed  38 sy fixed
 39 psprite flash: sprite | frame<<16 (-1 if none)   40 sx  41 sy
-42 is_human  43 respawn_ready (dead long enough to respawn)
+42 is_human (0 bot, 1 human, 2 idle member driven by a bot)  43 respawn_ready (dead long enough to respawn)
 44 match tic (tics into the current match)  45 match phase (0 play, 1 intermission)
 46 onground  47 refire
 ```
 
-`PlayerRow` (8 × i32): `slot, is_human, mobj id, frags, deaths, health, state, color`.
+`PlayerRow` (8 × i32): `slot, is_human, mobj id, frags, deaths, health, state, color`
+(`is_human` as in PlayerView[42]; `color` = slot & 3, Doom's green/indigo/brown/red
+translation, also in the body's MF_TRANSLATION flag bits).
 
 `Event` (8 × i32): `kind, a, b, c, x, y, z, d`
 
 | kind | meaning | a | b | c | d |
 |---|---|---|---|---|---|
 | 1 | sound | sfx id | origin mobj id (0 = at x,y,z) | volume 0..127 | slot+1 if a player's own (weapon) sound |
-| 2 | obituary | victim slot | killer slot (-1 world) | mod (weapon/means) | 0 |
-| 3 | pickup | slot | mobj type picked | message id | 0 |
-| 4 | damage | victim slot | attacker slot (-1) | amount | 0 |
-| 5 | spawn (respawn/teleport fog) | slot or -1 | — | — | — |
+| 2 | obituary | victim slot | killer slot (-1 world; = victim for suicide) | mod (weapon/means) | 0 |
+| 3 | pickup | slot | mobj type picked | message id | sfx id to play for that player only |
+| 4 | damage | victim slot | attacker slot (-1) | amount (after armor) | 0 |
+| 5 | spawn (respawn/teleport fog) | slot | 0 respawn, 1 teleport | — | — |
 | 6 | line switch texture changed | line index | — | — | — |
 | 7 | match start | — | — | — | — |
-| 8 | match end | winner slot | — | — | — |
+| 8 | match end | winner slot | winner frags | — | — |
+
+x, y, z (fixed) are the sound origin (kind 1), the item (3), the victim (4) and the
+spawn/teleport destination (5); 0 otherwise. Sector sounds (doors, lifts, switches) are
+kind 1 with origin 0 at the sector's sound origin.
+
+Pickup message ids: 1 armor, 2 megaarmor, 3 health bonus, 4 armor bonus, 5 soulsphere,
+6 megasphere, 7 stimpack, 8 medikit (needed), 9 medikit, 10 invulnerability, 11 berserk,
+12 invisibility, 13 radiation suit, 14 computer map, 15 light amp, 16 clip, 17 box of
+bullets, 18 rocket, 19 box of rockets, 20 cell, 21 cell pack, 22 shells, 23 box of
+shells, 24 backpack, 25 BFG9000, 26 chaingun, 27 chainsaw, 28 rocket launcher,
+29 plasma gun, 30 shotgun, 31 super shotgun.
 
 Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket, 6 plasma,
 7 BFG, 8 chainsaw, 9 SSG, 10 telefrag, 11 slime, 12 crush, 13 splash (rocket),
 14 berserk fist, 15 fall/other.
+
+### Sim notes (what `sim/` actually does)
+
+- Port of linuxdoom-1.10's playsim (p_*.c, info.c tables generated by `sim/gen/gen.py`),
+  16.16 fixed point and Doom's tables, no floats. Deathmatch 2 with weapons stay (placed
+  weapons are never removed; an owner cannot take the same weapon again), skill 4 (UV) things,
+  netgame rules. Keys are never spawned (MF_NOTDMATCH); locked doors open for anyone.
+- Freelook: hitscan uses `finetangent` of the pitch as the shot slope (no autoaim) and
+  can hit floors/ceilings (puff; none on sky). Missiles fly at speed·cos(pitch)
+  horizontally and speed·sin(pitch) vertically. Melee and the BFG spray keep vanilla's
+  vertical autoaim. Jump: momz = 8.0 from the ground (apex 36 units), 7-tic cooldown
+  after landing; holding jump repeats. Turning/looking stays live during the 18-tic
+  post-teleport freeze (vanilla froze it); moving does not.
+- Weapon keys are edge-triggered (a new nibble value); 8 = chainsaw, 9 = super shotgun.
+  Next/prev cycle fist, chainsaw, pistol, shotgun, SSG, chaingun, RL, plasma, BFG,
+  skipping weapons without ammo.
+- Item respawn queue is unbounded (vanilla's 128-entry ring would drop items with 100
+  players). Invulnerability and invisibility do not respawn (vanilla).
+- Spawn spots: DM starts, player starts, then up to 256 generated open-floor spots in the
+  main connected area. A player that cannot be placed without overlapping someone stays
+  dead and retries next tic.
+- Light specials, texture animation and scrollers are cosmetic and not simulated
+  (line-triggered light level changes, specials 12/13/35/79-81/104/138/139, are).
+- Bots (`sim/src/bots/`): subsector navigation graph built at map_load (polygons from the
+  BSP, step <= 24, headroom >= 56, drops one-way, doors/lifts/teleporters), A* with a
+  per-tic budget, item goals weighted by need, enemies only via P_CheckSight inside a
+  140° view (360° when hurt or within 200 units), per-bot reaction time / aim error /
+  turn rate, strafing, weapon choice by range. They drive their slot through the same
+  ticcmd as humans.
+- Tests: `cd sim && cargo test --release` (all 32 maps load and run with 64 bots; MAP19 keeps all 28 weapons;
+  twin/clone/deserialize determinism over 2 minutes; a scripted human slot);
+  `cargo run --release --bin bench` (tic cost); `node tools/test-wasm.mjs` (the built
+  wasm from Node). `node tools/build-sim.mjs` rebuilds `public/doomsim.wasm`.
+- `MATCH_TICS` boundaries emit kind 7 / kind 8; during intermission nothing moves; the
+  next match respawns everyone with a fresh inventory (bodies removed).
 
 ## TS side contracts
 

@@ -291,8 +291,8 @@ function rotAbout(out: THREE.Matrix4, pivot: THREE.Vector3, x: number, y: number
 
 const CHEST = new THREE.Vector3(0, 40, 2);
 /** boot sole sample points (bind space): heel and toe, each boot */
-const FEET: [number, number][] = [[B.shinR, 4.6], [B.shinL, -4.6]];
-const FOOT_X = [-6.5, 7.5];
+const FEET: [number, number][] = [[B.shinR, 5.6], [B.shinL, -5.6]];
+const FOOT_X = [-7.5, 9];
 // scratch (posing allocates nothing per call on the hot path)
 const A_HAND = new THREE.Vector3(), A_D1 = new THREE.Vector3(), A_D2 = new THREE.Vector3(), A_B1 = new THREE.Vector3();
 const A_S1 = new THREE.Vector3(), A_F2 = new THREE.Vector3(), P_TMP = new THREE.Vector3();

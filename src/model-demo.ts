@@ -6,10 +6,13 @@
  *   ?mode=sheet     all 8 rotations side by side (&frame=A..W)
  *   ?mode=anims     one cell per animation, mid-pose (&angle=degrees)
  *   ?mode=perf      100 animated instances, frame time in the corner
+ *   ?mode=ragdoll   rocket, plasma and BFG deaths thrown by the ragdoll, looping
+ *                   (&t=seconds after the hit: a still, simulated up to then)
  *   &t=seconds      freeze time (screenshots); &color=n player colour
  */
 import * as THREE from 'three';
 import { loadWad, readPalette, decodePatch, buildSpriteDefs, buildTranslations, PLAYER_COLORS, type Wad, type SpriteDef, type PaletteData } from './wad/index.js';
+import type { RagdollKick } from './model/ragdoll.js';
 import { createDoomguyFactory, FRAME, type DoomguyModel, type DoomguyFactory, type DoomguyPoseInput } from './model/index.js';
 
 const params = new URLSearchParams(location.search);
@@ -121,6 +124,7 @@ async function main(): Promise<void> {
   else if (MODE === 'sheet') sheet(factory, sprites, info);
   else if (MODE === 'anims') anims(factory, sprites, info);
   else if (MODE === 'perf') perf(factory, info);
+  else if (MODE === 'ragdoll') ragdoll(factory, info);
   else compare(factory, sprites, info);
 }
 
@@ -488,6 +492,84 @@ function perf(factory: DoomguyFactory, info: string): void {
     statsEl.textContent = `${info}\n${n} instances · ${res.calls} draw calls · ${res.triangles} tris\nframe ${res.frameMs.toFixed(2)} ms · pose+render CPU ${res.cpuMs.toFixed(2)} ms`;
     octx.clearRect(0, 0, w, h);
     requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+// ---------------------------------------------------------------------------
+// ragdoll: deaths that throw the body
+
+function ragdoll(factory: DoomguyFactory, info: string): void {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x2a2a2a);
+  const g = new THREE.GridHelper(512, 32, 0x555555, 0x444444);
+  g.position.y = -0.05;
+  scene.add(g);
+  const kinds = [
+    { name: 'rocket', kick: { dx: 1, dz: 0.15, power: 0.9, kind: 0 } },
+    { name: 'plasma', kick: { dx: 1, dz: -0.1, power: 0.6, kind: 1 } },
+    { name: 'BFG', kick: { dx: 0.8, dz: 0.5, power: 1, kind: 2 } },
+  ];
+  const guys = kinds.map((k, i) => {
+    const m = factory.create(i + 1, i + 3);
+    m.setLight(220);
+    m.object.position.set(-40, 0, (i - 1) * 110);
+    m.object.rotation.y = Math.PI; // facing the shooter at -X: the push is along +X world, his back
+    scene.add(m.object);
+    return { m, ...k };
+  });
+  const cam = new THREE.PerspectiveCamera(50, 1, 1, 4000);
+  const STAND = 0.6, CYCLE = 5;
+  // a cycle: standing, then hit (death frames H.., N held), the kick given on the first death pose
+  const poseAt = (m: DoomguyModel, kick: RagdollKick, t: number, first: boolean): void => {
+    const dt = t - STAND;
+    const frame = dt < 0 ? FRAME.A : Math.min(FRAME.N, FRAME.H + Math.floor(dt * 3.5));
+    // turned 180°: model +X is world -X, so a world +X push is model -X
+    const k = { ...kick, dx: -kick.dx, dz: -kick.dz };
+    m.pose({ frame, time: t, kick: dt >= 0 && first ? k : null, floor: 0, ceil: 256 });
+  };
+  const sim = (t: number): void => {
+    for (const gy of guys) {
+      gy.m.reset(1);
+      let kicked = false;
+      for (let u = 0; u <= t; u += 1 / 60) {
+        const first = !kicked && u >= STAND;
+        if (first) kicked = true;
+        poseAt(gy.m, gy.kick, u, first);
+      }
+    }
+  };
+  let t0 = performance.now() / 1000, cycleStart = -1;
+  const kicked = guys.map(() => false);
+  const loop = (): void => {
+    const { w, h } = resize();
+    if (FIXED_T !== null) sim(FIXED_T + STAND);
+    else {
+      const t = performance.now() / 1000 - t0;
+      const c = Math.floor(t / CYCLE);
+      if (c !== cycleStart) { cycleStart = c; guys.forEach((gy, i) => { gy.m.reset(c + i); kicked[i] = false; }); }
+      const tc = t - c * CYCLE;
+      guys.forEach((gy, i) => {
+        const first = !kicked[i] && tc >= STAND;
+        if (first) kicked[i] = true;
+        poseAt(gy.m, gy.kick, tc, first);
+      });
+    }
+    cam.aspect = w / h;
+    cam.position.set(-260, 150, 300);
+    cam.lookAt(20, 20, 0);
+    cam.updateProjectionMatrix();
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    renderer.render(scene, cam);
+    octx.clearRect(0, 0, w, h);
+    guys.forEach((gy, i) => {
+      const p = new THREE.Vector3(-40, 75, (i - 1) * 110).project(cam);
+      label(gy.name, (p.x * 0.5 + 0.5) * w, (0.5 - p.y * 0.5) * h);
+    });
+    statsEl.textContent = info;
+    if (FIXED_T === null) requestAnimationFrame(loop);
+    else (window as unknown as { __ready: boolean }).__ready = true;
   };
   loop();
 }

@@ -16,7 +16,10 @@
  *     the dynamic lights at the chest (a firing neighbour, rockets, plasma);
  *   - MF_SHADOW: the fuzz pass (multiply-darkening streaks, as the sprites);
  *   - colour: the RenderMobj's translation; a corpse (slot -1) keeps the colour it
- *     had while it was a player.
+ *     had while it was a player;
+ *   - ragdoll: an obituary by rocket (or its splash), plasma or the BFG throws the
+ *     body: the model ragdolls (src/model/ragdoll.ts), pushed away from the killer
+ *     (or along the body's own motion for a suicide), as hard as the killing blow.
  *
  * Models share the factory's geometry and textures (one draw call each); bodies
  * that vanish go back to a small free list, the rest are disposed.
@@ -25,6 +28,8 @@ import * as THREE from 'three';
 import { createDoomguyFactory, type DoomguyFactory, type DoomguyModel } from '../model/index.js';
 import type { Wad } from '../wad/index.js';
 import type { PlayerBodyContext, PlayerBodyRenderer, RenderMobj } from '../render/types.js';
+import type { RagdollKick } from '../model/ragdoll.js';
+import { EV_DAMAGE, EV_OBITUARY } from '../sim/abi.js';
 
 const MF_SHADOW = 0x40000;
 const FF_FRAMEMASK = 0x7fff;
@@ -34,6 +39,10 @@ const AIRBORNE = 6;
 const FREE_KEEP = 8;
 /** drawn bodies further than this are not posed (they are too small to read, and off the camera's interest) */
 const POSE_RANGE = 4096;
+/** means of death (obituary `mod`) that throw the body → ragdoll kind (0 explosion, 1 plasma, 2 BFG) */
+const THROWN: Record<number, number> = { 5: 0, 13: 0, 6: 1, 7: 2 };
+/** a kick waits this long (s) for its body to show the death frames */
+const KICK_TTL = 1.5;
 
 /** For tests: draw every body with the invisibility fuzz. */
 export const bodyDebug = { fuzz: false };
@@ -66,6 +75,9 @@ interface Body {
   y: number;
   tic: number;
   speed: number;
+  /** smoothed horizontal velocity, map units per tic */
+  vx: number;
+  vy: number;
   seen: number;
 }
 
@@ -91,6 +103,10 @@ export class ModelBodies implements PlayerBodyRenderer {
   private readonly free: Body[] = [];
   /** last known colour of a body, by mobj id (corpses keep their player's) */
   private readonly colorOf = new Map<number, number>();
+  /** ragdoll pushes waiting for their body's death frames, by mobj id */
+  private readonly kicks = new Map<number, { kick: RagdollKick; at: number }>();
+  /** damage taken this frame, by slot (the killing blow's size) */
+  private readonly hurt = new Map<number, number>();
   private readonly tmp = new THREE.Vector3();
   private readonly sphere = new THREE.Sphere();
   private readonly frustum = new THREE.Frustum();
@@ -113,6 +129,7 @@ export class ModelBodies implements PlayerBodyRenderer {
     this.pv.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.pv);
     let posed = 0;
+    this.readDeaths(ctx);
     for (let i = 0; i < count; i++) {
       const m = bodies[i];
       let b = this.live.get(m.id);
@@ -120,7 +137,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       const color = m.slot >= 0 ? m.translation : (this.colorOf.get(m.id) ?? m.translation);
       if (!b) {
         b = this.take(m.id, color);
-        b.x = m.x; b.y = m.y; b.tic = ctx.tic; b.speed = 0;
+        b.x = m.x; b.y = m.y; b.tic = ctx.tic; b.speed = 0; b.vx = 0; b.vy = 0;
         ctx.scene.add(b.holder);
       }
       b.seen = stamp;
@@ -131,7 +148,9 @@ export class ModelBodies implements PlayerBodyRenderer {
       if (dt > 0.05) {
         const d = Math.hypot(m.x - b.x, m.y - b.y) / dt;
         const sp = d > 64 ? 0 : d; // a teleport is not a sprint
-        b.speed += (sp - b.speed) * Math.min(1, dt * 0.35);
+        const k = Math.min(1, dt * 0.35);
+        b.speed += (sp - b.speed) * k;
+        if (d <= 64) { b.vx += ((m.x - b.x) / dt - b.vx) * k; b.vy += ((m.y - b.y) / dt - b.vy) * k; }
         b.x = m.x; b.y = m.y; b.tic = ctx.tic;
       } else if (dt < 0) { b.x = m.x; b.y = m.y; b.tic = ctx.tic; }
 
@@ -156,14 +175,27 @@ export class ModelBodies implements PlayerBodyRenderer {
       const k = 0.7 / Math.max(1, Math.max(dl.x, dl.y, dl.z) * 0.7 / 1.1);
       model.setDynamicLight?.(dl.x * k, dl.y * k, dl.z * k);
       model.setFuzz?.((m.flags & MF_SHADOW) !== 0 || bodyDebug.fuzz, ctx.time);
+      const floor = ctx.floorOf(m);
+      const pending = this.kicks.get(m.id);
+      let kick: RagdollKick | null = null;
+      if (pending && frame >= 7 && frame <= 13) {
+        // into model space: the body faces m.angle, Doom (x, y) → model (x, -z)
+        const c = Math.cos(m.angle), s = Math.sin(m.angle), k = pending.kick;
+        kick = { ...k, dx: k.dx * c + k.dz * s, dz: -(-k.dx * s + k.dz * c) };
+        this.kicks.delete(m.id);
+      }
       model.pose({
         frame,
         moveSpeed: b.speed,
-        airborne: m.z > ctx.floorOf(m) + AIRBORNE,
+        airborne: m.z > floor + AIRBORNE,
         time: ctx.time,
+        kick,
+        floor: floor - m.z,
+        ceil: ctx.ceilOf(m) - m.z,
       });
     }
     this.posed = posed;
+    for (const [id, k] of this.kicks) if (ctx.time - k.at > KICK_TTL) this.kicks.delete(id);
     // bodies that are gone: back to the free list, or disposed
     for (const [id, b] of this.live) {
       if (b.seen === stamp) continue;
@@ -179,6 +211,35 @@ export class ModelBodies implements PlayerBodyRenderer {
 
   get count(): number { return this.live.size; }
 
+  /** Obituaries that throw a body: queue a push for the victim's mobj (Doom x, y in dx, dz). */
+  private readDeaths(ctx: PlayerBodyContext): void {
+    const ev = ctx.events;
+    this.hurt.clear();
+    for (let i = 0; i < ctx.eventCount; i++) {
+      const e = ev[i];
+      if (e.kind === EV_DAMAGE) this.hurt.set(e.a, (this.hurt.get(e.a) ?? 0) + e.c);
+    }
+    for (let i = 0; i < ctx.eventCount; i++) {
+      const e = ev[i];
+      if (e.kind !== EV_OBITUARY) continue;
+      const kind = THROWN[e.c];
+      if (kind === undefined) continue;
+      const victim = ctx.playerAt(e.a);
+      if (!victim) continue;
+      // away from the killer; a suicide (or an unseen killer) along the body's own motion, else backwards
+      let dx = 0, dy = 0;
+      const killer = e.b >= 0 && e.b !== e.a ? ctx.playerAt(e.b) : undefined;
+      if (killer) { dx = victim.x - killer.x; dy = victim.y - killer.y; }
+      const own = this.live.get(victim.id);
+      if (Math.hypot(dx, dy) < 1 && own && Math.hypot(own.vx, own.vy) > 0.5) { dx = own.vx; dy = own.vy; }
+      if (Math.hypot(dx, dy) < 1) { dx = -Math.cos(victim.angle); dy = -Math.sin(victim.angle); }
+      const l = Math.hypot(dx, dy);
+      const dmg = this.hurt.get(e.a) ?? 0;
+      const power = kind === 1 ? Math.min(1, dmg / 40) : Math.min(1, dmg / 160);
+      this.kicks.set(victim.id, { kick: { dx: dx / l, dz: dy / l, power, kind }, at: ctx.time });
+    }
+  }
+
   private take(id: number, color: number): Body {
     const reuse = this.free.pop();
     if (reuse) {
@@ -186,7 +247,7 @@ export class ModelBodies implements PlayerBodyRenderer {
       reuse.model.reset?.(id);
       reuse.model.setColor(color);
       reuse.color = color;
-      reuse.speed = 0;
+      reuse.speed = 0; reuse.vx = 0; reuse.vy = 0;
       this.live.set(id, reuse);
       return reuse;
     }
@@ -198,7 +259,7 @@ export class ModelBodies implements PlayerBodyRenderer {
     holder.rotation.x = Math.PI / 2; // Y-up model in the Z-up world
     holder.add(model.object);
     holder.matrixAutoUpdate = true;
-    const b: Body = { id, model, holder, color, x: 0, y: 0, tic: 0, speed: 0, seen: 0 };
+    const b: Body = { id, model, holder, color, x: 0, y: 0, tic: 0, speed: 0, vx: 0, vy: 0, seen: 0 };
     this.live.set(id, b);
     return b;
   }

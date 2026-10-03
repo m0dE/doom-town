@@ -453,6 +453,11 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   renderer's `setPlayerBodyRenderer` hook) by default, Doom's sprites when the Esc menu
   says "Players: Classic sprites" (`prefs.players`). Corpses (PLAY mobjs no longer a
   player's body) are 3D too and keep their player's colour.
+  Deaths by rocket (or splash), plasma or the BFG throw the body: `src/model/ragdoll.ts`
+  (a client-side Verlet ragdoll on the rig's joints, launched away from the killer,
+  leashed to the sim's corpse) replaces the keyframed fall. Visual only; the sim
+  never sees it. Proportions: legs half his height, thick legs and boots, compact
+  pads (2026-10-03, after the user's reference sheet).
 - The renderer is fed a `RenderFrame` (`src/render/types.ts`) by the game loop:
   interpolated mobjs, sector heights/light, line textures, camera (x, y, z, yaw, pitch),
   psprites, and the event list for effects. It never touches the sim.

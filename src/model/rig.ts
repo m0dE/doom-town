@@ -32,7 +32,7 @@ export const NUM_BITS = 8;
 
 /** Joint pivots in bind (model) space. */
 export const PIVOT = {
-  pelvis: new THREE.Vector3(-1, 27, 0),
+  pelvis: new THREE.Vector3(-1, 29.5, 0),
   waist: new THREE.Vector3(-1, 32, 0),
   neck: new THREE.Vector3(0.5, 46, 0),
   shoulderR: new THREE.Vector3(-0.5, 42.5, 13.5),
@@ -42,10 +42,10 @@ export const PIVOT = {
   /** centre of the hand: the point the arm IK puts on the gun */
   handR: new THREE.Vector3(-0.5, 24, 13.5),
   handL: new THREE.Vector3(-0.5, 24, -13.5),
-  hipR: new THREE.Vector3(-1, 22.5, 4.6),
-  hipL: new THREE.Vector3(-1, 22.5, -4.6),
-  kneeR: new THREE.Vector3(-1, 12, 4.6),
-  kneeL: new THREE.Vector3(-1, 12, -4.6),
+  hipR: new THREE.Vector3(-1, 27.5, 5.6),
+  hipL: new THREE.Vector3(-1, 27.5, -5.6),
+  kneeR: new THREE.Vector3(-1, 15, 5.6),
+  kneeL: new THREE.Vector3(-1, 15, -5.6),
   /** gun-local (bind at the origin, barrel along +X): where each hand holds it */
   gunGrip: new THREE.Vector3(-1.5, -2.2, 0),
   gunFore: new THREE.Vector3(10.5, -1.2, 0),
@@ -85,7 +85,7 @@ export function defineBoxes(): BoxDef[] {
   const add = (b: BoxDef) => { boxes.push(b); return b; };
 
   // ---- trunk -------------------------------------------------------------
-  add({ name: 'pelvis', bone: B.pelvis, min: [-8, 22.5, -8.5], max: [5, 31, 8.5], faces: {
+  add({ name: 'pelvis', bone: B.pelvis, min: [-8, 26.5, -9.5], max: [5, 31, 9.5], faces: {
     px: A1([9, 27, 26, 34], 'G'), nx: A5([10, 25, 28, 33], 'G'), ...sides((f) => A3([11, 26, 25, 34], 'G', f)),
   } });
   add({ name: 'belt', bone: B.pelvis, min: [-8.6, 31, -9.4], max: [6.4, 34, 9.4], faces: {
@@ -107,19 +107,19 @@ export function defineBoxes(): BoxDef[] {
   } });
 
   // ---- shoulder pads (+ the antenna on the right one) ---------------------
-  const padR = add({ name: 'padR', topShade: 0, bone: B.padR, min: [-9, 43, 6], max: [4, 48, 18], faces: {
+  const padR = add({ name: 'padR', topShade: 0, bone: B.padR, min: [-7.5, 42.5, 8], max: [3, 47, 16.5], faces: {
     px: A1([0, 8, 12, 13], 'AK'), nx: A5([26, 8, 38, 13], 'AK'), ...sides((f) => A3([13, 8, 27, 13], 'AK', f)),
   } });
   add(mirrorZ(padR, 'padL', B.padL, {
     px: A1([24, 8, 36, 13], 'AK'), nx: A5([0, 8, 12, 13], 'AK'), ...sides((f) => A3([13, 8, 27, 13], 'AK', f)),
   }));
-  const capR = add({ name: 'padCapR', topShade: 0, bone: B.padR, min: [-7, 48, 7], max: [2, 50, 15], faces: {
+  const capR = add({ name: 'padCapR', topShade: 0, bone: B.padR, min: [-5.5, 47, 9], max: [1, 48.5, 14.5], faces: {
     px: A1([3, 6, 11, 8], 'A'), nx: A5([27, 6, 35, 8], 'A'), ...sides((f) => A3([14, 6, 26, 8], 'A', f)),
   } });
   add(mirrorZ(capR, 'padCapL', B.padL, {
     px: A1([25, 6, 33, 8], 'A'), nx: A5([3, 6, 11, 8], 'A'), ...sides((f) => A3([14, 6, 26, 8], 'A', f)),
   }));
-  add({ name: 'antenna', topShade: 0, bone: B.padR, min: [-7, 50, 8], max: [-6, 55, 9], faces: all(A1([9, 1, 10, 6])) });
+  add({ name: 'antenna', topShade: 0, bone: B.padR, min: [-5.5, 48.5, 10], max: [-4.5, 53, 11], faces: all(A1([9, 1, 10, 6])) });
 
   // ---- arms: bare upper arms, gray gauntlets, bare hands ------------------
   const uArmR = add({ name: 'uArmR', bone: B.uArmR, min: [-4, 34, 10], max: [3, 42.5, 17], faces: {
@@ -140,19 +140,19 @@ export function defineBoxes(): BoxDef[] {
   add(mirrorZ(handR, 'handL', B.fArmL, { ...all(A1([12, 23, 17, 27], 'S', true)), py: 'derive', ny: 'derive' }));
 
   // ---- legs: green tops, gray armour, boots --------------------------------
-  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-6.5, 12, 0.3], max: [4.5, 23, 9], faces: {
+  const thighR = add({ name: 'thighR', bone: B.thighR, min: [-7, 15, 0.6], max: [5, 28, 10.6], faces: {
     px: A1([18, 33, 27, 44], 'GAK', true), nx: A5([19, 33, 28, 44], 'GAK'), ...sides((f) => A3([8, 33, 20, 44], 'GA', f)),
   } });
   add(mirrorZ(thighR, 'thighL', B.thighL, {
     px: A1([18, 33, 27, 44], 'GAK'), nx: A5([10, 33, 19, 44], 'GAK'), ...sides((f) => A3([8, 33, 20, 44], 'GA', f)),
   }));
-  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-6.5, 0, 0.3], max: [4.5, 12.2, 9], faces: {
+  const shinR = add({ name: 'shinR', bone: B.shinR, min: [-7.5, 0, 0.4], max: [5, 15.2, 11], faces: {
     px: A1([18, 44, 27, 56], 'AK', true), nx: A5([19, 44, 28, 56], 'AK'), ...sides((f) => A3([16, 43, 28, 54], 'AK', f)),
   } });
   add(mirrorZ(shinR, 'shinL', B.shinL, {
     px: A1([18, 44, 27, 56], 'AK'), nx: A5([10, 44, 19, 56], 'AK'), ...sides((f) => A3([16, 43, 28, 54], 'AK', f)),
   }));
-  const toeR = add({ name: 'toeR', bone: B.shinR, min: [4.5, 0, 0.8], max: [7.5, 4, 8.5], faces: {
+  const toeR = add({ name: 'toeR', bone: B.shinR, min: [5, 0, 0.9], max: [9, 4.5, 10.5], faces: {
     px: A1([18, 52, 27, 56], 'AK', true), ...sides((f) => A3([13, 51, 17, 55], 'A', f)),
   } });
   add(mirrorZ(toeR, 'toeL', B.shinL, { px: A1([18, 52, 27, 56], 'AK'), ...sides((f) => A3([13, 51, 17, 55], 'A', f)) }));

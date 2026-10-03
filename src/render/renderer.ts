@@ -129,6 +129,8 @@ export class Renderer {
   private tmpV = new THREE.Vector3();
   private hudPx = 0;
   private bodyRenderer: PlayerBodyRenderer | null = null;
+  /** this frame's player bodies by slot */
+  private readonly slotMobj = new Map<number, RenderMobj>();
   private bodies: RenderMobj[] = [];
   private mobjById = new Map<number, RenderMobj>();
   private startTime = performance.now();
@@ -323,11 +325,13 @@ export class Renderer {
     this.sprites.count = 0;
     this.fuzz.count = 0;
     this.mobjById.clear();
+    this.slotMobj.clear();
     let nb = 0;
     const useBodies = this.bodyRenderer !== null;
     for (let i = 0; i < count; i++) {
       const m = f.mobjs[i];
       this.mobjById.set(m.id, m);
+      if (m.slot >= 0) this.slotMobj.set(m.slot, m);
       const sector = this.sectorAt(m.x, m.y);
       if (this.options.dynamicLights) this.lights.addMobj(m, sector, now);
       if (m.id === viewId) continue;
@@ -361,6 +365,9 @@ export class Renderer {
         scene: this.scene, camera: this.camera, extralight, tic, time: now,
         lightOf: (m) => this.lightLv[this.sectorAt(m.x, m.y)] ?? 0,
         floorOf: (m) => this.floorH[this.sectorAt(m.x, m.y)] ?? 0,
+        ceilOf: (m) => this.ceilH[this.sectorAt(m.x, m.y)] ?? Infinity,
+        playerAt: (slot) => this.slotMobj.get(slot),
+        events: f.events, eventCount: f.eventCount ?? f.events.length,
         dynLightAt: (m, z, out) => {
           if (!dyn) return out.set(0, 0, 0);
           return this.lights.lightAt(m.x, m.y, z, this.sectorAt(m.x, m.y), out).multiplyScalar(dyn);

@@ -19,6 +19,7 @@ import { buildRig, NUM_BONES, type BuiltRig } from './rig.js';
 import { SpriteSource } from './texture.js';
 import { createDoomguyMaterial, makeIndexTexture, makePaletteTexture, type DoomguyUniforms, type SharedTextures } from './material.js';
 import { FRAME, FRAME_TICS, TICRATE, gibMatrices, gibParts, lerpPose, poseFor, solvePose, zeroPose, type Pose } from './anim.js';
+import { Ragdoll, type RagdollKick } from './ragdoll.js';
 
 export interface DoomguyPoseInput {
   /** Doom sprite frame (A = 0 … W = 22), as the sim reports it */
@@ -33,6 +34,14 @@ export interface DoomguyPoseInput {
   airborne?: boolean;
   /** seconds, monotonic */
   time: number;
+  /**
+   * The death throws the body (rocket, plasma, BFG): while dying (frames H..N) the
+   * keyframed fall is replaced by a ragdoll launched with this push. Read once.
+   */
+  kick?: RagdollKick | null;
+  /** floor and ceiling under the body, model space (y; default 0 and none) */
+  floor?: number;
+  ceil?: number;
 }
 
 export interface DoomguyOptions {
@@ -69,6 +78,7 @@ export class DoomguyModel {
   private lastWalkChange = -10;
   private seed: number;
   private fuzz = false;
+  private ragdoll: Ragdoll | null = null;
 
   constructor(private readonly shared: Shared, color = 0, seed = 0) {
     this.seed = seed;
@@ -160,7 +170,11 @@ export class DoomguyModel {
     this.walkAmp = 0;
     this.lastWalkFrame = -1;
     this.lastWalkChange = -10;
+    this.ragdoll = null;
   }
+
+  /** a ragdoll is animating (or holding) the body */
+  get ragdolling(): boolean { return this.ragdoll !== null; }
 
   pose(p: DoomguyPoseInput): void {
     const time = p.time;
@@ -220,7 +234,16 @@ export class DoomguyModel {
 
     this.uniforms.uFullbright.value = frame === FRAME.F ? 1 : 0;
 
-    if (frame >= FRAME.O) {
+    if (!dying || frame >= FRAME.O) this.ragdoll = null;
+    else if (p.kick && !this.ragdoll) this.ragdoll = new Ragdoll(this.mats, p.kick, this.seed);
+
+    if (this.ragdoll) {
+      this.uniforms.uGore.value = 0;
+      const floor = p.floor ?? 0;
+      this.ragdoll.floorY = floor + 0.1;
+      this.ragdoll.step(dt, { floor, ceil: p.ceil ?? Infinity });
+      this.ragdoll.write(this.mats);
+    } else if (frame >= FRAME.O) {
       const t = time - this.gibStartTime;
       gibMatrices(this.gibStart, this.shared.parts, t, this.seed, this.mats);
       this.uniforms.uGore.value = Math.min(0.62, t * 2.5);

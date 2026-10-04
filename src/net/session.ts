@@ -19,6 +19,8 @@ import { connect, lockstep, type Connection, type IdentitySession, type NetworkI
 import { connectLoopback } from './loopback.js';
 import { ticsPerFrameFor, type DoomApp, type DoomState } from '../sim/doomsim.js';
 import { TICRATE } from '../sim/map.js';
+/** Lockstep world hashes every this many tics (see the Lockstep options below). */
+export const HASH_EVERY = 7;
 
 export type AppMessageHandler = (player: string | null, data: unknown) => void;
 
@@ -88,6 +90,11 @@ export class NetSession {
       predict: opts.predict ?? true,
       fps: TICRATE,
       snapshotEvery: opts.snapshotEvery,
+      // A world hash is a full serialize of the world (a war room's is as costly as a
+      // tic): every 7th tic (5 a second) catches a desync 0.2 s later at a seventh of
+      // the cost - the phone budget (DESIGN.md "Mobile"). Every peer runs one bundle, so
+      // all hash the same frames (and a 5 s comparison window stays aligned).
+      hashEvery: HASH_EVERY,
       dial: (events, hints) => this.dial(events, hints),
       inputSource: (ctx) => opts.makeInput(ctx),
       onConfirmedTick: (s, f) => opts.onConfirmedTick(s, f),

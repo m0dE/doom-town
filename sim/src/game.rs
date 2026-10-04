@@ -87,6 +87,7 @@ impl Config {
         d(&mut self.slots, match self.mode {
             MODE_ELIM => 24,
             MODE_WAR => 200,
+            MODE_BR => 100,
             _ => 64,
         });
         self.slots = self.slots.clamp(1, 255);
@@ -572,8 +573,16 @@ impl World {
     /// battle royale: fist, pistol, 20 bullets
     pub fn apply_loadout(&mut self, slot: usize) {
         if self.mode() == MODE_BR {
-            // the lobby: 200 bullets for fun; the starting kit is set at boarding
-            self.players[slot].ammo[AM_CLIP as usize] = if self.g.phase == PH_LOBBY { 200 } else { self.g.cfg.br.start_bullets };
+            let p = &mut self.players[slot];
+            if self.g.phase == PH_LOBBY {
+                // the lobby is fists only (no shooting); the starting kit is given at boarding
+                p.weaponowned[WP_PISTOL as usize] = false;
+                p.ammo[AM_CLIP as usize] = 0;
+                p.readyweapon = WP_FIST;
+                p.pendingweapon = WP_FIST;
+            } else {
+                p.ammo[AM_CLIP as usize] = self.g.cfg.br.start_bullets;
+            }
         }
         if self.mode() == MODE_ELIM {
             let p = &mut self.players[slot];

@@ -42,6 +42,7 @@ import { cfgWords, roomGame, type CfgOverrides, type RoomGame } from '../menu/mo
 import { NetSession } from '../net/session.js';
 import { APP_ID, API_KEY } from '../menu/rooms.js';
 import { Input, MAX_PITCH } from '../input/input.js';
+import { TouchControls, initTouchMode, onTouchMode, touchMode, type TouchFrame } from '../input/touch.js';
 import { TicRing } from './ring.js';
 import { Gfx } from '../hud/gfx.js';
 import { Hud, TEAM_CSS, type BrHud, type ModeHud, type ScoreRow } from '../hud/hud.js';
@@ -222,6 +223,9 @@ export class Game {
   readonly net: NetSession;
   readonly app: DoomApp;
   private readonly input: Input;
+  /** the on-screen controls (phones, tablets; hidden while a mouse or keys are used) */
+  private readonly touch: TouchControls;
+  private readonly touchFrame: TouchFrame = { playing: true, engaged: false, hasMap: false, br: false, zoomOn: false, grenades: null, weapon: -1, spawnChoices: null, barPx: 0, dead: false };
   private readonly hud: Hud;
   private readonly sound: SoundOut;
   private view: MapView;
@@ -238,6 +242,10 @@ export class Game {
    * predicted frame (to tell a new one from an old one).
    */
   private readonly ownMissiles = new Set<number>();
+  /** The buggy we drive (PlayerView[55], predicted), 0 none; drawn from the prediction like our missiles. */
+  private ownVehicle = 0;
+  /** ownMissiles plus ownVehicle, rebuilt per frame while driving. */
+  private readonly ownSkip = new Set<number>();
   private readonly predOwn = new TicRing<Int32Array>(96);
   private readonly predCand = new TicRing<Int32Array>(96);
   private lines: Int32Array | null = null;
@@ -324,6 +332,7 @@ export class Game {
     progress('Connecting', 0.6);
     const mapIds = game.rotation.map((m) => sim.mapIds.get(m)!);
     const overrides = opts.offline ? opts.overrides : undefined;
+    if (overrides?.slots) game.slots = Math.min(game.slots, overrides.slots);
     const app = createDoomApp(sim, { slots: game.slots, cfg: (seed) => cfgWords(game, mapIds, seed, overrides, sim.version >= 9) });
     const g = new Game(opts, wad, app, game);
     try {
@@ -360,7 +369,7 @@ export class Game {
     this.pause = new PauseMenu(gfx, {
       resume: () => this.resume(),
       leave: () => this.onLeave?.(),
-      changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); this.view.setPlayers?.(np.players); },
+      changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); this.view.setPlayers?.(np.players); this.touch.setPrefs(np); },
     });
 
     this.hasMinimap = game.mode.key === 'war' || game.mode.key === 'br';
@@ -374,6 +383,23 @@ export class Game {
     this.input.settings = { sensitivity: p.sensitivity, invertY: p.invertY };
     // the scope is battle royale's alone (DESIGN.md): elsewhere the zoom button is not sent
     this.input.zoomAllowed = game.mode.key === 'br';
+
+    // phones and tablets (DESIGN.md "Mobile"): the on-screen controls, TAP TO PLAY
+    initTouchMode();
+    this.touch = new TouchControls(gfx, this.input, {
+      menu: () => this.openPause(),
+      scores: (on) => this.hud.showScores(on),
+      map: () => { if (this.hasMinimap) this.hud.toggleMap(); },
+      chat: () => this.openChat(),
+    });
+    this.touch.setPrefs(p);
+    this.input.onRelease = () => this.touch.releaseFingers();
+    const applyTouch = (on: boolean): void => { this.input.setTouch(on); this.hud.setTouch(on); this.touch.setVisible(on); };
+    applyTouch(touchMode());
+    this.disposers.push(onTouchMode(applyTouch));
+    this.touchFrame.hasMap = this.hasMinimap;
+    this.touchFrame.br = game.mode.key === 'br';
+    document.documentElement.classList.add('in-game');
 
     this.frame = {
       tic: 0,
@@ -494,20 +520,27 @@ export class Game {
 
   /** The predicted world's copy of our projectiles at frame f (rows of MobjView). */
   private recordOwnMissiles(s: DoomState, f: number, pv: Int32Array): void {
+    // nothing of ours in the air and no missile weapon up (claimMissiles' own test):
+    // no need to copy the predicted world's mobjs (the phone budget, DESIGN.md "Mobile")
+    // the buggy we drive is ours too: drawn from the prediction, like the camera riding it
+    const vehicle = pv.length > PV.vehicle ? pv[PV.vehicle] : 0;
+    this.ownVehicle = vehicle;
+    if (!this.ownMissiles.size && !vehicle && (pv[PV.ready] < 4 || pv[PV.ready] > 6)) { this.predOwn.record(f, EMPTY); return; }
     const mobjs = this.app.sim.mobjs(s.h);
     const cand = missileIds(mobjs);
     const conf = this.confirmed.get(f - 1);
     const prev = this.predCand.get(f - 1) ?? (conf ? missileIds(conf.mobjs) : null);
     this.predCand.record(f, cand);
     this.claimMissiles(mobjs, prev, pv);
-    if (!this.ownMissiles.size) { this.predOwn.record(f, EMPTY); return; }
+    if (!this.ownMissiles.size && !vehicle) { this.predOwn.record(f, EMPTY); return; }
+    const ours = (id: number): boolean => id === vehicle || this.ownMissiles.has(id);
     let k = 0;
     const n = mobjs.length / MOBJ_WORDS;
-    for (let i = 0; i < n; i++) if (this.ownMissiles.has(mobjs[i * MOBJ_WORDS + M_ID])) k++;
+    for (let i = 0; i < n; i++) if (ours(mobjs[i * MOBJ_WORDS + M_ID])) k++;
     const rows = new Int32Array(k * MOBJ_WORDS);
     k = 0;
     for (let i = 0; i < n; i++) {
-      if (!this.ownMissiles.has(mobjs[i * MOBJ_WORDS + M_ID])) continue;
+      if (!ours(mobjs[i * MOBJ_WORDS + M_ID])) continue;
       rows.set(mobjs.subarray(i * MOBJ_WORDS, (i + 1) * MOBJ_WORDS), k++ * MOBJ_WORDS);
     }
     this.predOwn.record(f, rows);
@@ -613,7 +646,7 @@ export class Game {
       }
       case EV_SUPPLY:
         this.hud.banner('SUPPLY DROP INCOMING', '#ff5a3a', 3500);
-        this.hud.message('A supply drop is coming down: it is marked on your map (M)', '#ff8a6a');
+        this.hud.message(`A supply drop is coming down: it is marked on your map${this.input.touchMode ? '' : ' (M)'}`, '#ff8a6a');
         return;
       case EV_CRATE:
         // c = 1: a supply crate
@@ -622,7 +655,7 @@ export class Game {
         return;
       case EV_SPAWN:
         // b = 2: a parachute landing
-        if (b === 2 && a === me && me >= 0) this.hud.message('Touchdown! Find a weapon - crates hold loot (E to open).', '#7cff6b');
+        if (b === 2 && a === me && me >= 0) this.hud.message(`Touchdown! Find a weapon - crates hold loot (${this.input.touchMode ? 'USE' : 'E'} to open).`, '#7cff6b');
         return;
     }
   }
@@ -811,6 +844,11 @@ export class Game {
     this.lastT = now;
     this.input.update(dt);
     this.chatter(now);
+    const tf = this.touchFrame;
+    tf.playing = !this.pause.open && !this.hud.chatting;
+    tf.engaged = this.input.locked;
+    tf.zoomOn = this.input.zooming;
+    this.touch.frame(tf);
 
     const v = this.net.lockstep.view(now);
     const t = renderTimes(v);
@@ -914,8 +952,13 @@ export class Game {
     // the frame we fire it rather than a playout delay later; their confirmed copies
     // are skipped so nothing is drawn twice. When there is no prediction to draw from,
     // the confirmed copies are drawn as everything else.
-    const own = t.drawSelfFromPrediction && this.ownMissiles.size ? this.predOwn.pair(t.self) : null;
-    let count = this.addMobjs(a, b, frac, own ? this.ownMissiles : null, 0);
+    const own = t.drawSelfFromPrediction && (this.ownMissiles.size || this.ownVehicle) ? this.predOwn.pair(t.self) : null;
+    let skip: Set<number> | null = null;
+    if (own) {
+      skip = this.ownMissiles;
+      if (this.ownVehicle) { skip = this.ownSkip; skip.clear(); for (const id of this.ownMissiles) skip.add(id); skip.add(this.ownVehicle); }
+    }
+    let count = this.addMobjs(a, b, frac, skip, 0);
     if (own) count = this.addMobjs({ mobjs: own.a } as Snap, { mobjs: own.b } as Snap, own.frac, null, count);
     if (this.staged.length && pv) count = this.addStaged(count, cam, pv[PV.z] * FRAC);
     f.mobjCount = count;
@@ -1080,6 +1123,14 @@ export class Game {
       zoom: this.zoom,
     }, now);
     if (!dead) this.killer = null;
+    // what the touch controls show next frame
+    const tf = this.touchFrame;
+    const air = pv && pv.length > PV.air ? pv[PV.air] : 0;
+    tf.weapon = pv && !dead && !inter && !(air >= AIR_SHIP && air <= AIR_CHUTE) ? pv[PV.ready] : -1;
+    tf.grenades = mode.br?.grenades ?? null;
+    tf.spawnChoices = dead ? mode.spawnChoices : null;
+    tf.dead = dead || inter;
+    tf.barPx = prefs().hud === 'bar' && pv ? this.hud.barHeight : 0;
     void R_HUMAN;
   }
 
@@ -1192,6 +1243,8 @@ export class Game {
     for (const d of this.disposers) d();
     this.input.setEnabled(false);
     this.input.dispose();
+    this.touch.dispose();
+    document.documentElement.classList.remove('in-game');
     try { this.net.leave(); } catch { /* already gone */ }
     this.pause.dispose();
     this.hud.dispose();
@@ -1226,6 +1279,10 @@ export class Game {
       angle: pv ? ((pv[PV.angle] >>> 0) * BAM) : null,
       render: this.view.stats?.() ?? null,
       zoom: this.zoom,
+      touch: this.input.touchMode, locked: this.input.locked, paused: this.pause.open,
+      yaw: this.input.yaw, pitch: this.input.pitch, mapBig: this.hud.mapBig, buttons: this.input.seenButtons, ...this.input.heldState,
+      air: pv && pv.length > PV.air ? pv[PV.air] : null, grenades: pv && pv.length > PV.grenades ? pv[PV.grenades] : null,
+      phase: snap ? snap.match[MV.phase] : null, dead: pv ? pv[PV.state] !== 0 : null,
     };
   }
 
@@ -1288,6 +1345,31 @@ export class Game {
     }
     return out.sort((x, y) => x.dist - y.dist);
   }
+
+  /** For tests: forget the button bits sent so far (debug().buttons). */
+  testClearButtons(): void { this.input.seenButtons = 0; }
+
+  /** For tests: the mobjs of a type around us (confirmed), nearest first, with the map direction to each. */
+  testMobjs(type: number): { id: number; dist: number; dir: number; x: number; y: number }[] {
+    const snap = this.confirmed.latest();
+    const me = snap?.me;
+    if (!snap || !me) return [];
+    const out = [];
+    // in the dropship, falling or under the chute: from the sim's virtual position
+    const air = me.length > PV.air ? me[PV.air] : 0;
+    const airborne = air >= AIR_SHIP && air <= AIR_CHUTE;
+    const mx = airborne ? me[PV.airX] : me[PV.x], my = airborne ? me[PV.airY] : me[PV.y];
+    for (let i = 0, n = snap.mobjs.length / MOBJ_WORDS; i < n; i++) {
+      const o = i * MOBJ_WORDS;
+      if ((snap.mobjs[o + M_TYPE] & 0xffff) !== type) continue;
+      const dx = (snap.mobjs[o + M_X] - mx) * FRAC, dy = (snap.mobjs[o + M_Y] - my) * FRAC;
+      out.push({ id: snap.mobjs[o + M_ID], dist: Math.hypot(dx, dy), dir: Math.atan2(dy, dx), x: snap.mobjs[o + M_X] * FRAC, y: snap.mobjs[o + M_Y] * FRAC });
+    }
+    return out.sort((x, y) => x.dist - y.dist);
+  }
+
+  /** For tests: our view direction in map terms (radians), as testFace takes it. */
+  testViewDir(): number { return this.input.yaw + (this.yawOffset >>> 0) * BAM; }
 
   /** For tests: hold an action ('forward', 'attack', 'jump', 'w3', ...). */
   testHold(action: string, down: boolean): void { this.input.hold(action, down); }

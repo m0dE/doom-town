@@ -32,6 +32,13 @@ in vec3 vDir;
 out vec4 fragColor;
 void main() {
   vec3 d = vDir;
+  if (uLowFx > 0.5) {
+    // graphics quality low: the texture's colours as a plain gradient (no atan, no fetches)
+    float e = d.z / max(length(d.xy), 1e-3);
+    vec3 g = mix(uSkyBottom, uSkyTop, smoothstep(0.0, 0.6, e));
+    fragColor = vec4(mix(g, uSkyBottom * mix(0.85, 0.35, sqrt(clamp(-e, 0.0, 1.0))), smoothstep(-0.06, 0.05, -e)), 0.0);
+    return;
+  }
   float ang = atan(d.y, d.x);
   vec4 r = texRect(uSkyTex);
   float u = ang / 6.28318530718 * 1024.0;

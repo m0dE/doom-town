@@ -5,7 +5,7 @@ crates that spill sniper rifles instead of shotguns and rocket launchers, and a 
 that closes in about three minutes. The third example of the modding guide
 ([docs/MODDING.md](../../../docs/MODDING.md), "Example 3: a rules remix").
 
-- **Mode:** battle royale, 64 slots, 30 s lobby, 7-minute match limit.
+- **Mode:** battle royale, 100 slots, 30 s lobby, 7-minute match limit.
 - **Storm** (`rules.zone`): four stages instead of five — 30 s wait + 30 s shrink to
   50 % of the map, then 25 + 25 s to 25 %, 20 + 20 s to 10 %, 15 + 20 s to nothing;
   2, 4, 8 and 15 damage per second outside.

@@ -122,6 +122,8 @@ export class Hud {
   private lastCapture = '';
   private lastZone = '';
   private lastLobby = '';
+  /** Touch mode (DESIGN.md "Mobile"): TAP wording, fewer feed lines, the minimap as a button. */
+  private touch = false;
 
   constructor(private readonly host: HTMLElement, private readonly gfx: Gfx) {
     this.font = new DoomFont(gfx);
@@ -210,6 +212,14 @@ export class Hud {
     return d;
   }
 
+  setTouch(on: boolean): void {
+    if (on === this.touch) return;
+    this.touch = on;
+    this.host.classList.toggle('touch', on);
+    this.lastCenter = this.lastLobby = this.lastCapture = '';
+    // the corner minimap is a button on touch: a large map left open stays usable
+  }
+
   // ------------------------------------------------------------------ transient lines
 
   /** A big line across the middle of the screen (a boss arrives, a round is won), `ms` long. */
@@ -226,17 +236,21 @@ export class Hud {
   private lastBoss = '';
 
   /** A pickup or system message (Doom's top-left line), 4 s. */
-  message(text: string, tint?: string): void { this.push(this.el.msgs, this.line([[text, tint ?? RED]]), 4000, 4); }
+  message(text: string, tint?: string): void { this.push(this.el.msgs, this.fitLine([[text, tint ?? RED]], this.small, this.msgWidth), 4000, this.touch ? 3 : 4); }
 
   chat(name: string, text: string, color: number): void {
-    this.push(this.el.msgs, this.line([[`${name}: `, PLAYER_COLORS[color]?.css ?? GOLD], [text, WHITE]]), 7000, 6);
+    this.push(this.el.msgs, this.fitLine([[`${name}: `, PLAYER_COLORS[color]?.css ?? GOLD], [text, WHITE]], this.small, this.msgWidth), 7000, this.touch ? 4 : 6);
   }
+
+  /** Messages and the feed: a size smaller on a big touch screen, and narrower lines. */
+  private get small(): number { return this.touch ? Math.max(2, this.k - 1) : this.k; }
+  private get msgWidth(): number { return innerWidth * (this.touch ? 0.5 : 0.9); }
 
   /** An obituary split into pieces so names can wear their colours. */
   obituary(pieces: [string, string | undefined][], mine: boolean): void {
-    const d = this.fitLine(pieces, Math.max(2, this.k - 1), innerWidth * 0.44);
+    const d = this.fitLine(pieces, Math.max(2, this.k - 1), innerWidth * (this.touch ? 0.36 : 0.44));
     if (mine) d.style.filter = 'drop-shadow(0 0 4px rgba(255, 200, 80, .55))';
-    this.push(this.el.feed, d, 6000, 5);
+    this.push(this.el.feed, d, 6000, this.touch ? 3 : 5);
   }
 
   private push(box: HTMLElement, d: HTMLElement, ms: number, max: number): void {
@@ -261,13 +275,15 @@ export class Hud {
     box.append(input);
     this.host.append(box);
     this.chatInput = input;
-    const close = (): void => { box.remove(); this.chatInput = null; done(); };
+    const close = (): void => { if (this.chatInput !== input) return; this.chatInput = null; box.remove(); done(); };
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') { const t = input.value.trim(); if (t) send(t); close(); }
       else if (e.key === 'Escape') close();
     });
     input.addEventListener('blur', () => { if (this.chatInput === input) close(); });
+    // now, inside the tap (iOS shows the keyboard only then), and again once laid out
+    input.focus();
     setTimeout(() => input.focus(), 0);
   }
 
@@ -283,6 +299,9 @@ export class Hud {
 
   /** `M`: the large map, or back to the corner. */
   toggleMap(): void { this.minimap.toggleBig(); }
+
+  /** The large map is open (tests). */
+  get mapBig(): boolean { return this.minimap.big; }
 
   setRows(rows: ScoreRow[]): void { this.rows = rows; }
 
@@ -344,14 +363,14 @@ export class Hud {
     else if (s.dead && m?.spectating) center = `spec|${m.spectating}`;
     else if (s.dead && m?.spawnChoices) center = `spawn|${m.spawnChoices.join(',')}|${s.killer ?? ''}`;
     else if (s.dead) center = `dead|${s.killer ?? ''}|${s.respawnReady}`;
-    const centerKey = `${center}|${this.k}`;
+    const centerKey = `${center}|${this.k}|${this.touch}`;
     if (centerKey !== this.lastCenter) {
       this.lastCenter = centerKey;
       const c = this.el.center;
       c.innerHTML = '';
       if (center === 'click') {
-        c.append(this.text('CLICK TO PLAY', WHITE, this.k + 1));
-        c.append(this.text('ESC FOR THE MENU', GREY));
+        c.append(this.text(this.touch ? 'TAP TO PLAY' : 'CLICK TO PLAY', WHITE, this.k + 1));
+        c.append(this.text(this.touch ? 'MENU: THE BUTTON AT THE TOP' : 'ESC FOR THE MENU', GREY));
       } else if (center.startsWith('freeze') && m) {
         c.append(this.text(`ROUND ${Math.max(1, m.round)}`, GOLD, this.k + 2));
         c.append(this.text(`FIGHT IN ${Math.ceil(m.phaseLeft)}`, WHITE, this.k + 1));
@@ -365,19 +384,19 @@ export class Hud {
         } else c.append(this.text('WAITING FOR THE NEXT MATCH', GOLD, this.k + 1));
         if (m?.spectating) {
           c.append(this.line([['SPECTATING ', GREY], [m.spectating, WHITE]]));
-          c.append(this.text('FIRE TO WATCH SOMEONE ELSE', GREY));
+          c.append(this.text(this.touch ? 'TAP FIRE TO WATCH SOMEONE ELSE' : 'FIRE TO WATCH SOMEONE ELSE', GREY));
         }
       } else if (center.startsWith('spec') && m) {
         c.append(this.text('YOU ARE OUT THIS ROUND', RED, this.k + 1));
         c.append(this.line([['SPECTATING ', GREY], [m.spectating ?? '', WHITE]]));
-        c.append(this.text('FIRE TO WATCH SOMEONE ELSE', GREY));
+        c.append(this.text(this.touch ? 'TAP FIRE TO WATCH SOMEONE ELSE' : 'FIRE TO WATCH SOMEONE ELSE', GREY));
       } else if (center.startsWith('spawn') && m?.spawnChoices) {
         if (s.killer) c.append(this.line([['FRAGGED BY ', RED], [s.killer, WHITE]], this.k + 1));
         c.append(this.text('CHOOSE WHERE TO RESPAWN', GOLD, this.k));
         c.append(this.text(m.spawnChoices.join('   '), WHITE, this.k));
       } else if (s.dead) {
         if (s.killer) c.append(this.line([['FRAGGED BY ', RED], [s.killer, WHITE]], this.k + 1));
-        if (s.respawnReady) c.append(this.text('PRESS FIRE TO RESPAWN', GOLD, this.k));
+        if (s.respawnReady) c.append(this.text(this.touch ? 'TAP FIRE TO RESPAWN' : 'PRESS FIRE TO RESPAWN', GOLD, this.k));
       }
     }
 
@@ -549,7 +568,7 @@ export class Hud {
     const box = this.el.capture;
     const ip = alive && m && m.mode === 3 ? m.inPoint ?? null : null;
     const out = alive && !!br?.outside;
-    const prompt = br?.prompt ?? null;
+    const prompt = br?.prompt ? (this.touch ? br.prompt.replace(/^PRESS /, 'TAP ') : br.prompt) : null;
     const blinkOn = Math.floor(now / 400) % 2 === 0;
     let key = '';
     if (prompt) key = `q|${prompt}|${blinkOn}`;
@@ -590,12 +609,12 @@ export class Hud {
     const box = this.el.lobby;
     box.hidden = !lobby;
     if (!lobby) { this.lastLobby = ''; return; }
-    const key = `${Math.ceil(lobby.secondsLeft)}|${lobby.players.length}|${lobby.players.slice(0, 40).map((p) => p.name).join(',')}|${this.k}`;
+    const key = `${Math.ceil(lobby.secondsLeft)}|${lobby.players.length}|${lobby.players.slice(0, 40).map((p) => p.name).join(',')}|${this.k}|${this.touch}`;
     if (key === this.lastLobby) return;
     this.lastLobby = key;
     box.innerHTML = '';
     const s = Math.max(0, Math.ceil(lobby.secondsLeft));
-    box.append(this.line([['DROPSHIP LEAVES IN ', GREY], [`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, GOLD]], this.k + 1));
+    box.append(this.fitLine([['DROPSHIP LEAVES IN ', GREY], [`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, GOLD]], this.k + 1, Math.min(innerWidth * 0.46, this.k * 230) - this.k * 10));
     box.append(this.text(`${lobby.players.length} MARINES IN THIS MATCH`, WHITE));
     const list = document.createElement('div');
     list.className = 'plist';
@@ -612,7 +631,10 @@ export class Hud {
     if (lobby.players.length > shown.length) box.append(this.text(`AND ${lobby.players.length - shown.length} MORE`, GREY, small));
     const tips = document.createElement('div');
     tips.className = 'tips';
-    for (const t of ['USE: OPEN A CRATE / ENTER A VEHICLE', 'G: THROW A GRENADE', 'RIGHT MOUSE: ZOOM', '2: PISTOL / SNIPER', 'JUMP: LEAVE THE SHIP / OPEN THE CHUTE', 'M: MAP']) {
+    const tipList = this.touch
+      ? ['LOBBY: FISTS ONLY - PUNCH TO SHOVE', 'USE: OPEN A CRATE / ENTER A VEHICLE', 'NADE: THROW A GRENADE', 'ZOOM: TAP TO SCOPE, TAP AGAIN', 'TAP THE WEAPON: PISTOL / SNIPER', 'JUMP: LEAVE THE SHIP / OPEN THE CHUTE', 'MAP BUTTON: THE MAP']
+      : ['LOBBY: FISTS ONLY - PUNCH TO SHOVE', 'USE: OPEN A CRATE / ENTER A VEHICLE', 'G: THROW A GRENADE', 'RIGHT MOUSE: ZOOM', '2: PISTOL / SNIPER', 'JUMP: LEAVE THE SHIP / OPEN THE CHUTE', 'M: MAP'];
+    for (const t of tipList) {
       tips.append(this.text(t, GREY, small));
     }
     box.append(tips);

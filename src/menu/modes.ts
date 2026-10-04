@@ -9,7 +9,7 @@
  *   na-tdm-1, team-room       Team Deathmatch        (tdm, team, teams)
  *   na-elim-1, cs-night       Elimination            (elim, elimination, cs, rounds)
  *   na-war-1, big-war         War, 100 v 100         (war, conquest)
- *   na-br-1, pubg-night       Battle royale, 64      (br, royale, battle, pubg) - plays the br01 mod
+ *   na-br-1, pubg-night       Battle royale, 100     (br, royale, battle, pubg) - plays the br01 mod
  *   na-mod-br01-1, my-mod-x   a mod: `mod` then the mod's id (public/mods/index.json);
  *                             the mod's mode, map and slots apply
  *   na-boss-1, na-tdm-boss-1  + Random bosses        (boss, bosses) - Deathmatch and TDM only
@@ -46,7 +46,7 @@ export const MODES: Record<ModeKey, ModeInfo> = {
   tdm: { key: 'tdm', id: 1, label: 'Team Deathmatch', short: 'TDM', slots: 64, rotation: 'teamDeathmatch', teams: true, matchSeconds: 610, blurb: 'Red against blue, 32 a side' },
   elim: { key: 'elim', id: 2, label: 'Elimination', short: 'ELIM', slots: 24, rotation: 'elimination', teams: true, matchSeconds: 900, blurb: 'Rounds, no respawns, first team to 7' },
   war: { key: 'war', id: 3, label: 'War', short: 'WAR', slots: 200, rotation: 'war', teams: true, matchSeconds: 1210, blurb: '100 against 100, hold the capture points' },
-  br: { key: 'br', id: 4, label: 'Battle Royale', short: 'BR', slots: 64, rotation: 'battleRoyale', teams: false, matchSeconds: 440, blurb: 'One life, a shrinking zone, crates full of loot' },
+  br: { key: 'br', id: 4, label: 'Battle Royale', short: 'BR', slots: 100, rotation: 'battleRoyale', teams: false, matchSeconds: 440, blurb: 'One life, a shrinking zone, crates full of loot' },
 };
 
 export const MODE_ORDER: readonly ModeKey[] = ['dm', 'tdm', 'elim', 'war', 'br'];
@@ -144,6 +144,8 @@ export interface CfgOverrides {
   matchTics?: number; interTics?: number; roundTics?: number; freezeTics?: number; roundsToWin?: number; tickets?: number;
   /** battle royale (rules block, sim_version >= 9): the lobby's length */
   lobbyTics?: number;
+  /** fewer marines than the mode's (tests on slow machines; never above the mode's) */
+  slots?: number;
 }
 
 /**
@@ -156,7 +158,7 @@ export function cfgWords(g: RoomGame, mapIds: readonly number[], seed: number, o
   if (o.lobbyTics !== undefined) extra.set(RULE.lobbyTics, o.lobbyTics);
   const rules = withRules && (g.mod?.info?.rules || extra.size) ? rulesBlock(g.mod?.info?.rules, extra) : [];
   return Uint32Array.from([
-    2, g.mode.id, g.slots,
+    2, g.mode.id, o.slots ? Math.min(g.slots, o.slots) : g.slots,
     o.matchTics ?? 0, o.interTics ?? 0, o.roundTics ?? 0, o.freezeTics ?? 0, o.roundsToWin ?? 0, o.tickets ?? 0,
     0,
     mapIds.length, ...mapIds,

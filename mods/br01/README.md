@@ -5,9 +5,11 @@ The battle royale map the built-in `br` rooms play (DESIGN.md "Battle royale" an
 (houses, shops, a church, an office block with a roof terrace, town hall, police,
 hotel, school, clinic, warehouses), a factory, a freight depot, farms, a radio station
 on a hill, an army base, a gas station and motel, a river with five bridges, and a
-lobby island sealed off in the south-east corner.
+lobby island sealed off in the south-east corner (2816 × 1152: a boxing ring over a
+nukage moat, an obstacle course with a teleporter back to its start, a crate maze with
+a teleporter to the top of a slide into the pool, and a lookout tower with a lift).
 
-- Things: 170 crates (9020), 81 DM starts (11), 72 lobby spots (9030), 22 buggies
+- Things: 170 crates (9020), 81 DM starts (11), 113 lobby spots (9030), 22 buggies
   (9040), sniper rifles (9050) and grenade packs (9051), sparse ground loot.
 - Source: `map.mts` re-exports `tools/maps/br01.mts` (the map DSL in
   `tools/maps/lib/`). Build: `npm run mods` → `public/mods/br01.wad`.

@@ -33,9 +33,12 @@ const W = 8192;
 const SKYZ = 320;
 const SKY = 'F_SKY1';
 const CRATE = 9020, START = 11, LOBBY_SPOT = 9030, BUGGY = 9040, SNIPER = 9050, GRENADES = 9051;
-/** The lobby island (SE corner, walled off from the playfield by solid rock). */
-const LOBBY: R4 = [6784, -7936, 7936, -6784];
-const LOBBY_RING: R4 = [6528, -8192, 8192, -6528];
+/** The lobby island (SE corner): its floor, and the box of rock + rim sealing it off. */
+const LOBBY: R4 = [4992, -7936, 7808, -6784];
+const LOBBY_RING: R4 = [4736, -8192, 8192, -6656];
+/** Off-limits for DM starts and buggies: the lobby box + 640 (the sim keeps its playfield box and
+ * the zone off the lobby spots' box + a margin; a spawn spot in there would be refused). */
+const nearLobby = (x: number, y: number) => x > LOBBY[0] - 640 && y < LOBBY[3] + 640;
 const inLobbyRing = (x: number, y: number, m = 0) => x > LOBBY_RING[0] - m && x < LOBBY_RING[2] + m && y > LOBBY_RING[1] - m && y < LOBBY_RING[3] + m;
 const RIVER_Z = -48;
 
@@ -909,7 +912,7 @@ function starts(): void {
         const a = (k / 8) * Math.PI * 2 + r;
         const x = snap(cx + Math.cos(a) * r, 8), y = snap(cy + Math.sin(a) * r, 8);
         const s = c.at(x, y) as Style;
-        if (inLobbyRing(x, y, 64) || (s as unknown as Solid).solid || /WATER/.test(s.floorPic)) continue;
+        if (nearLobby(x, y) || (s as unknown as Solid).solid || /WATER/.test(s.floorPic)) continue;
         if (free(x, y, 48) === null || near(crates, x, y, 128) || near(doorPts, x, y, 128) || near(pts, x, y, 256)) continue;
         if (c.things.some((t) => Math.hypot(t.x - x, t.y - y) < 72)) continue;
         pts.push([x, y]);
@@ -921,32 +924,140 @@ function starts(): void {
 }
 
 // ---- lobby island ------------------------------------------------------------------------------------
-// A walled plaza sealed off by solid rock (unreachable from the playfield and vice versa):
-// 64+ lobby spots (thing 9030) in a grid, crate stacks and low walls to play around.
+// The 45 s wait before the drop (fists only, nothing takes damage, punches shove twice as
+// hard): a 2816 × 1152 island in the SE corner, walled by solid rock on three sides and a
+// 256-high stone rim on the north (low enough to see the town over from the lookout,
+// out of reach from anywhere in the lobby; nothing outside can climb it either).
+//   west    the obstacle course: stepping stones over a (harmless) nukage pit, stairs to a
+//           32-wide ledge, a jump-up block (+40), a gap jump, the finish platform with a
+//           WR teleporter back to the start
+//   middle  the boxing ring: an octagon raised over a nukage moat, no ropes — punch them
+//           off; glowing carpet, red corner posts, two blue beacons, banners
+//   east    a crate-stack maze (a teleporter in its far cell to the top of the slide), the
+//           slide (8-unit steps) down into the pool, the lookout tower (240) with a WR lift
+// 72+ lobby spots (9030) spread over the open floor.
+const TAG_TP_START = 1, TAG_TP_SLIDE = 2, TAG_LIFT = 3;
 function lobby(): void {
+  const playR = R;
+  R = rng(9030); // its own random stream: the playfield's loot / starts don't shift with it
+  try { lobbyIsland(); } finally { R = playR; }
+}
+function lobbyIsland(): void {
   const [x0, y0, x1, y1] = LOBBY;
-  c.paint(rect(...LOBBY_RING), solid('ROCK4'));
-  c.paint(rect(x0, y0, x1, y1), out(0, 'FLAT5_4', { light: 208, riser: 'STEP1', wall: 'STARGR2' }));
-  c.modify(chamfer(x0 + 128, y0 + 128, x1 - 128, y1 - 128, 128), withProps({ floorPic: 'FLOOR0_3', light: 216 }));
-  // a raised centre stage with steps, crate stacks and low walls for cover
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  c.paint(oct(cx, cy, 192, 192), out(24, 'FLAT22', { light: 232, riser: 'STEP6' }));
-  c.paint(oct(cx, cy, 128, 128), out(48, 'FLOOR1_1', { light: 240, riser: 'STEP6' }));
-  for (const [dx, dy] of [[-400, -400], [336, -400], [-400, 336], [336, 336]]) {
-    crateStack(cx + dx, cy + dy, 64, 64, 8); crateStack(cx + dx + 64, cy + dy, 64, 32, 8); crateStack(cx + dx, cy + dy + 64, 64, 96, 8);
+  c.paint(rect(...LOBBY_RING), solid('STONE2'));
+  // the north rim borders the playfield (the strip behind the motel), the island inside
+  c.paint(rect(x0, y1, x1, LOBBY_RING[3]), mass(256, 'STONE3', { floorPic: 'FLAT1', light: 192 }));
+  const ground = out(0, 'FLAT5_4', { light: 200, riser: 'STEP1' });
+  c.paint(rect(x0, y0, x1, y1), ground);
+  c.modify(rect(x0 + 64, y0 + 64, x1 - 64, y1 - 64), withProps({ floorPic: 'FLOOR0_3', light: 208 }));
+  // banners on the rim and the walls
+  for (let x = x0 + 192; x < x1 - 128; x += 384) c.paint(rect(x, y1 - 16, x + 64, y1), mass(224, (x / 384) % 2 ? 'PANRED' : 'PANBLUE', { floorPic: 'FLAT1', light: 224 }));
+  for (let x = x0 + 384; x < x1 - 128; x += 768) c.paint(rect(x, y0, x + 64, y0 + 16), mass(224, 'PANRED', { floorPic: 'FLAT1', light: 224 }));
+
+  // ==== west: the obstacle course =====================================================
+  const course = (z: number, pic = 'FLAT1', o: Partial<Style> = {}) => out(z, pic, { light: 200, riser: 'METAL', ...o });
+  // start pad (teleport destination 1)
+  c.paint(rect(x0 + 64, y1 - 192, x0 + 320, y1 - 64), out(0, 'FLOOR1_1', { light: 224, riser: 'STEP1', tag: TAG_TP_START }));
+  th(x0 + 192, y1 - 128, 14, 270);
+  th(x0 + 96, y1 - 96, T.TECHLAMP2); th(x0 + 288, y1 - 96, T.TECHLAMP2);
+  // the nukage pit (harmless in the lobby) with a ledge to climb out anywhere, stones across
+  const pit: R4 = [x0 + 64, y0 + 320, x0 + 832, y1 - 288];
+  c.paint(rect(pit[0] - 32, pit[1] - 32, pit[2] + 32, pit[3] + 32), out(-16, 'FLOOR7_1', { light: 192, riser: 'NUKEDGE1' }));
+  c.paint(rect(...pit), out(-40, 'NUKAGE1', { light: 224, riser: 'NUKEDGE1' }));
+  // stones north → south (gaps of 32..96: the wide ones want a running jump)
+  const stones: Pt[] = [[x0 + 128, y1 - 352], [x0 + 224, y1 - 448], [x0 + 128, y1 - 576], [x0 + 256, y1 - 672], [x0 + 352, y1 - 768]];
+  for (const [sx, sy] of stones) c.paint(rect(sx, sy, sx + 64, sy + 64), course(0, 'FLAT5_7', { riser: 'ROCK3' }));
+  // a second, harder line of single stones east–west across the pit (96 apart)
+  for (let k = 0; k < 5; k++) { const sx = x0 + 448 + k * 96; c.paint(rect(sx, y1 - 480, sx + 48, y1 - 432), course(0, 'FLAT5_7', { riser: 'ROCK3' })); }
+  // the climb: stairs up to a 32-wide ledge at 72 along the pit's east side
+  const cx0 = x0 + 864;
+  stairs(c, x0 + 640, y0 + 64, cx0, y0 + 192, 'E', [24, 48, 72], (z) => course(z, 'FLAT23', { riser: 'STEP4' }));
+  c.paint(rect(cx0, y0 + 64, cx0 + 32, y1 - 448), course(72, 'FLAT23'));
+  // jump-up block (+40: needs the jump button), a gap, the finish (+24)
+  c.paint(rect(cx0 - 32, y1 - 448, cx0 + 32, y1 - 384), course(112, 'FLAT23'));
+  c.paint(rect(cx0 - 96, y1 - 288, cx0 + 32, y1 - 160), course(112, 'FLAT23'));
+  c.paint(rect(cx0 - 96, y1 - 160, cx0 + 32, y1 - 64), course(136, 'FLAT1', { light: 224 }));
+  c.paint(rect(cx0 - 64, y1 - 144, cx0, y1 - 80), out(136, 'GATE3', { light: 255, riser: 'METAL', line: { special: 97, tag: TAG_TP_START } }));
+  th(cx0 + 16, y1 - 80, T.TECHLAMP2);
+
+  // ==== middle: the boxing ring ========================================================
+  const rx = snap(x0 + 1408), ry = snap((y0 + y1) / 2);
+  c.paint(oct(rx, ry, 480, 480), out(-16, 'FLOOR7_1', { light: 200, riser: 'NUKEDGE1' }));
+  c.paint(oct(rx, ry, 448, 448), out(-40, 'NUKAGE1', { light: 216, riser: 'NUKEDGE1' }));
+  c.paint(oct(rx, ry, 320, 320), out(32, 'FLAT14', { light: 232, riser: 'METAL', special: 8 }));
+  c.paint(oct(rx, ry, 96, 96), out(32, 'FLAT22', { light: 255, riser: 'METAL', special: 8 }));
+  stairs(c, rx - 64, ry + 320, rx + 64, ry + 416, 'S', [-16, 8], (z) => out(z, 'FLAT23', { light: 208, riser: 'STEP4' }));
+  stairs(c, rx - 64, ry - 416, rx + 64, ry - 320, 'N', [-16, 8], (z) => out(z, 'FLAT23', { light: 208, riser: 'STEP4' }));
+  for (const [dx, dy] of [[-216, -216], [200, -216], [-216, 200], [200, 200]]) c.paint(rect(rx + dx, ry + dy, rx + dx + 16, ry + dy + 16), mass(104, 'LITERED1', { floorPic: 'FLAT23', light: 255 }));
+  for (const bx of [rx - 512, rx + 480]) c.paint(oct(bx + 16, y1 - 96, 32, 32), mass(288, 'LITEBLU4', { floorPic: 'FLAT22', light: 255 }));
+  for (const [dx, dy] of [[-400, -400], [400, -400], [-400, 400], [400, 400]]) th(rx + dx, ry + dy, T.TORCH_BLUE);
+
+  // ==== east: maze, slide + pool, lookout tower =======================================
+  // crate maze: 5 × 4 cells of 128 (96 corridors, 32 crate walls), carved by a seeded DFS
+  const mz0 = x1 - 704, mzy0 = ry - 64, NXc = 5, NYc = 4, P = 128;
+  c.paint(rect(mz0, mzy0, mz0 + NXc * P + 32, mzy0 + NYc * P + 32), mass(96, 'CRATE1', { floorPic: 'CRATOP2', light: 176 }));
+  const cellR = (i: number, j: number): R4 => [mz0 + 32 + i * P, mzy0 + 32 + j * P, mz0 + i * P + P, mzy0 + j * P + P];
+  const mazeFloor = out(0, 'FLOOR4_8', { light: 152, riser: 'CRATE1' });
+  const seen = new Set<number>(); const stack: [number, number][] = [[0, 0]]; seen.add(0);
+  c.paint(rect(...cellR(0, 0)), mazeFloor);
+  while (stack.length) {
+    const [i, j] = stack[stack.length - 1];
+    const nb = shuffle([[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => [i + a, j + b] as [number, number]).filter(([a, b]) => a >= 0 && b >= 0 && a < NXc && b < NYc && !seen.has(b * NXc + a)));
+    if (!nb.length) { stack.pop(); continue; }
+    const [a, b] = nb[0];
+    seen.add(b * NXc + a); stack.push([a, b]);
+    const [p0, q0, p1, q1] = cellR(a, b), [r0, s0, r1, s1] = cellR(i, j);
+    c.paint(rect(Math.min(p0, r0), Math.min(q0, s0), Math.max(p1, r1), Math.max(q1, s1)), mazeFloor);
   }
-  for (const [a, b, d, e] of [[-160, -464, 160, -440], [-160, 440, 160, 464], [-464, -160, -440, 160], [440, -160, 464, 160]]) c.paint(rect(cx + a, cy + b, cx + d, cy + e), mass(48, 'CEMENT7', { floorPic: 'FLAT1', light: 216 }));
-  for (const [x, y] of [[x0 + 64, y0 + 64], [x1 - 64, y0 + 64], [x0 + 64, y1 - 64], [x1 - 64, y1 - 64]]) th(x, y, T.TECHLAMP);
-  // 11 × 11 grid, 88 apart, skipping the stage, the walls and the stacks
+  // entrances (west side, south side) and the teleporter in the far cell (to the slide top)
+  const e1 = cellR(0, 0), e2 = cellR(2, NYc - 1);
+  c.paint(rect(mz0, e1[1], mz0 + 32, e1[3]), mazeFloor);
+  c.paint(rect(e2[0], e2[3], e2[2], e2[3] + 32), mazeFloor);
+  const far = cellR(NXc - 1, NYc - 1);
+  c.paint(rect(far[0] + 16, far[1] + 16, far[2] - 16, far[3] - 16), out(0, 'GATE1', { light: 255, riser: 'CRATE1', line: { special: 97, tag: TAG_TP_SLIDE } }));
+  // the slide: 8-unit steps from a platform at 96 down into the pool
+  const sx0 = x0 + 1984, sx1 = sx0 + 128;
+  const pool: R4 = [sx0 - 64, y0 + 64, sx1 + 96, y0 + 320];
+  c.paint(rect(...pool), out(-24, 'FWATER1', { light: 200, riser: 'A-MOSROK' }));
+  stairs(c, sx0, pool[3], sx1, pool[3] + 352, 'N', [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88], (z) => out(z, 'FLAT23', { light: 208, riser: 'SILVER1' }));
+  c.paint(rect(sx0, pool[3] + 352, sx1, pool[3] + 480), out(96, 'FLOOR1_1', { light: 224, riser: 'SILVER1', tag: TAG_TP_SLIDE }));
+  th((sx0 + sx1) / 2, pool[3] + 416, 14, 270);
+  // a diving board over the pool
+  c.paint(rect(sx0 + 32, pool[3] - 96, sx1 - 32, pool[3]), out(8, 'FLAT23', { light: 208, riser: 'SILVER1' }));
+  // the lookout tower (240) in the SE corner with a WR lift on its west side
+  const tw: R4 = [x1 - 320, y0 + 64, x1 - 64, y0 + 384];
+  c.paint(rect(...tw), out(240, 'FLAT1', { light: 216, riser: 'STONE3' }));
+  c.paint(rect(tw[0] - 128, tw[1], tw[0], tw[3]), out(240, 'FLAT1', { light: 216, riser: 'STONE3' }));
+  c.paint(rect(tw[0] - 128, tw[1] + 96, tw[0], tw[3] - 96), out(232, 'STEP2', { light: 216, riser: 'SUPPORT3', tag: TAG_LIFT }));
+  c.paint(rect(tw[0] - 256, tw[1] + 96, tw[0] - 128, tw[3] - 96), out(0, 'FLOOR1_7', { light: 232, riser: 'STEP1', line: { special: 88, tag: TAG_LIFT } }));
+  th(tw[2] - 32, tw[3] - 32, T.TECHLAMP); th(tw[0] - 96, tw[3] - 32, T.TECHLAMP2);
+
+  // crate stacks for cover around the open floor
+  for (const [dx, dy] of [[x0 + 1024, y1 - 160], [x0 + 1792, y1 - 160], [x0 + 1024, y0 + 96], [x0 + 1728, y0 + 96]]) {
+    crateStack(dx, dy, 64, 64); crateStack(dx + 64, dy, 64, 32); crateStack(dx, dy - 64 > y0 ? dy - 64 : dy + 64, 64, 96);
+  }
+  for (const [x, y] of [[x0 + 480, y0 + 96], [x0 + 1216, y1 - 96], [x0 + 2496, y1 - 96], [x0 + 1600, y0 + 96]]) th(x, y, T.TECHLAMP2);
+  // light pools of the lamps in the lobby
+  const glow = lighten(24);
+  for (const t of c.things) {
+    if (!((t.type === T.TECHLAMP || t.type === T.TECHLAMP2 || t.type === T.TORCH_BLUE) && inLobbyRing(t.x, t.y))) continue;
+    // (never split a tagged or trigger sector: a lift / teleport pad stays one sector)
+    c.modify(oct(snap(t.x, 8), snap(t.y, 8), 96, 96), (p) => ((p as Style).tag || (p as Style).line ? null : glow(p)));
+  }
+
+  // lobby spots: an 88 grid over the floor (the plaza, the ring, the maze, the slide; not in the
+  // nukage or the pool, not on a trigger, not near things)
   let n = 0;
-  for (let j = 0; j < 11; j++) for (let i = 0; i < 11; i++) {
-    const x = snap(x0 + 136 + i * 88, 8), y = snap(y0 + 136 + j * 88, 8);
-    if (Math.hypot(x - cx, y - cy) < 240 || free(x, y, 16) !== 0) continue;
+  for (let y = y0 + 80; y < y1 - 40; y += 88) for (let x = x0 + 80; x < x1 - 40; x += 88) {
+    const s = c.at(x, y) as Style;
+    if ((s as unknown as Solid).solid || s.line) continue;
+    const fl = free(x, y, 24);
+    if (fl === null || fl < -16 || fl > 96) continue;
     if (c.things.some((t) => Math.hypot(t.x - x, t.y - y) < 64)) continue;
-    th(x, y, LOBBY_SPOT, Math.floor(Math.atan2(cy - y, cx - x) * 4 / Math.PI + 8.5) % 8 * 45);
+    th(x, y, LOBBY_SPOT, Math.floor(R() * 8) * 45);
     n++;
   }
-  if (n < 64) throw new Error(`lobby: only ${n} spots`);
+  if (n < 72) throw new Error(`lobby: only ${n} spots`);
 }
 
 // ---- buggies --------------------------------------------------------------------------------------
@@ -966,7 +1077,7 @@ function buggies(): void {
   };
   const tryAt = (x: number, y: number, ang: number) => {
     x = snap(x, 8); y = snap(y, 8);
-    if (inLobbyRing(x, y, 256) || near(placed, x, y, 1024) || !clear(x, y)) return false;
+    if (inLobbyRing(x, y, 256) || nearLobby(x, y) || near(placed, x, y, 1024) || !clear(x, y)) return false;
     placed.push([x, y]); th(x, y, BUGGY, ang); return true;
   };
   // the through roads first (facing along the road), then open ground

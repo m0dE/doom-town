@@ -315,7 +315,9 @@ impl World {
     /// land here if it fits (open sky above), else the first landable point on rings of
     /// 64..512 units around, else the nearest spawn spot that fits
     fn try_land(&mut self, slot: usize, sky: bool) -> bool {
-        let (x, y) = (self.players[slot].ax, self.players[slot].ay);
+        // the body is placed at whole map units (a MapThing): test exactly that point, or
+        // rounding could put it across a line into a wall
+        let (x, y) = (self.players[slot].ax & !(FRACUNIT - 1), self.players[slot].ay & !(FRACUNIT - 1));
         let mut at = None;
         if sky && self.landing_fits(x, y) {
             at = Some((x >> FRACBITS, y >> FRACBITS));
@@ -326,7 +328,7 @@ impl World {
             }
             for k in 0..8u32 {
                 let a = fine(ANG45.wrapping_mul(k));
-                let (rx, ry) = (x.wrapping_add(ring * finecosine(a)), y.wrapping_add(ring * finesine(a)));
+                let (rx, ry) = (x.wrapping_add(ring * finecosine(a)) & !(FRACUNIT - 1), y.wrapping_add(ring * finesine(a)) & !(FRACUNIT - 1));
                 if self.landable(rx, ry) {
                     at = Some((rx >> FRACBITS, ry >> FRACBITS));
                     break 'rings;

@@ -22,6 +22,7 @@ import { mapPwad } from '../src/sim/pwad.js';
 import { MAP_LUMP, TICRATE } from '../src/sim/map.js';
 import { PV } from '../src/sim/abi.js';
 import { loadWad } from '../src/wad/wad.js';
+import { cfgWords, gameFor } from '../src/menu/modes.js';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const arg = (k: string, d: number): number => Number(process.argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1] ?? d);
@@ -31,7 +32,8 @@ const SLOTS = arg('slots', 64);
 const NOSNAP = process.argv.includes('--nosnap');
 
 const wasm = readFileSync(path.join(ROOT, 'public/doomsim.wasm'));
-const wad = loadWad(new Uint8Array(readFileSync(path.join(ROOT, 'public/freedm-lite.wad'))));
+// a map's lumps ship in public/maps/<MAP>.map.wad, not in the base pak
+const wad = loadWad(new Uint8Array(readFileSync(path.join(ROOT, `public/maps/${MAP_LUMP}.map.wad`))));
 const pwad = mapPwad(wad, MAP_LUMP);
 
 const rt = new netcode.FakeRuntime();
@@ -62,8 +64,9 @@ function script(player: string, frame: number): unknown {
 interface Client { name: string; app: DoomApp; ls: lockstep.Lockstep<DoomState, unknown>; desyncs: number; confirmedFrames: number; predictedFrames: number }
 
 async function client(name: string, jitterSeed: number): Promise<Client> {
-  const sim = await DoomSim.create(wasm, pwad);
-  const app = createDoomApp(sim, { slots: SLOTS, rev: 'test' });
+  const sim = await DoomSim.create(wasm, [{ name: MAP_LUMP, pwad }]);
+  const game = gameFor('dm', false);
+  const app = createDoomApp(sim, { slots: SLOTS, rev: 'test', cfg: (seed) => cfgWords({ ...game, slots: SLOTS }, [sim.mapIds.get(MAP_LUMP)!], seed) });
   const rnd = xorshift(jitterSeed);
   // One way 2..10 ms: inside a tic, so the in-process node's verdict for F
   // (taken when it ticks F+1) has both votes. Lateness comes from the holes below.

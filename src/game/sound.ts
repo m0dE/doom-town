@@ -23,6 +23,8 @@ export interface SoundOut {
 }
 
 const SELF = { self: true };
+/** The storm loop at full strength, relative to a sound at full volume (before the master). */
+const STORM_GAIN = 0.6;
 
 export class GameSound implements SoundOut {
   private readonly bank: SoundBank | null;
@@ -62,9 +64,8 @@ export class GameSound implements SoundOut {
     bank.update();
   }
 
-  setVolume(v: number): void { this.bank?.setVolume(v); this.volume = v; if (this.storm) this.storm.out.gain.value = this.stormLevel * 0.35 * v; }
+  setVolume(v: number): void { this.bank?.setVolume(v); }
 
-  private volume = 1;
   private stormLevel = 0;
   private storm: { src: AudioBufferSourceNode; out: GainNode } | null = null;
 
@@ -101,14 +102,15 @@ export class GameSound implements SoundOut {
       lfo.connect(lfoGain).connect(lp.frequency);
       const out = ctx.createGain();
       out.gain.value = 0;
-      src.connect(lp).connect(out).connect(ctx.destination);
+      src.connect(lp).connect(out).connect(bank.master);
       src.start();
       lfo.start();
       src.onended = () => { try { lfo.stop(); } catch { /* stopped */ } };
       this.storm = { src, out };
     }
     if (this.storm) {
-      this.storm.out.gain.setTargetAtTime(level * 0.35 * this.volume, ctx.currentTime, 0.25);
+      // through the bank's master: the volume setting and the limiter apply
+      this.storm.out.gain.setTargetAtTime(level * STORM_GAIN, ctx.currentTime, 0.25);
       if (level === 0) {
         const st = this.storm;
         this.storm = null;

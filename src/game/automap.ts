@@ -17,7 +17,7 @@ export interface WorldView {
   /** Player bodies: the 3D marine or Doom's sprites (views without 3D ignore it). */
   setPlayers?(mode: '3d' | 'sprites'): void;
   /** Frame statistics, for tests. */
-  stats?(): Record<string, number>;
+  stats?(): Record<string, number | string>;
   dispose(): void;
 }
 

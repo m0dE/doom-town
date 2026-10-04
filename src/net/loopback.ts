@@ -115,8 +115,18 @@ export function connectLoopback(opts: LoopbackOptions): Promise<Transport> {
       // Like the SDK: onConnect first, then the connection resolves.
       opts.onConnect(null, [], 0, null, opts.tickRate, clientId);
       resolve(transport);
+      // The node's clock is its own: a tick the page's timer missed (a busy main
+      // thread - a phone in a 200-bot room) is still sent, late, as a real node's
+      // would arrive, so offline play keeps 35 tics a second of game time whenever
+      // the page can step that fast. At most a second of them per timer call, and a
+      // backlog over two seconds (a tab in the background) is dropped, not replayed.
+      let t0 = performance.now();
       timer = setInterval(() => {
-        if (!open) return;
+        let due = Math.floor((performance.now() - t0) / period);
+        if (due - frame > 2 * opts.tickRate) { t0 += (due - frame - 1) * period; due = frame + 1; }
+        for (let n = 0; open && frame < due && n < opts.tickRate; n++) tick();
+      }, period);
+      const tick = (): void => {
         frame++;
         const batch: NetworkInput[] = [];
         if (!joined) {
@@ -137,7 +147,7 @@ export function connectLoopback(opts: LoopbackOptions): Promise<Transport> {
           slack = [];
           transport.onInputSlack?.(frame, samples);
         }
-      }, period);
+      };
     }, 0);
   });
 }

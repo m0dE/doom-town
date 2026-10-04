@@ -65,6 +65,9 @@ export class RoyaleLayer {
     this.playSprite = playSprite;
   }
 
+  /** Graphics quality low: cheaper supply smoke (the storm and sky read uLowFx). */
+  setLowFx(on: boolean): void { this.smoke.lowFx = on; }
+
   /** Before the mobj loop: remembers the buggies (drivers are seated in them). */
   begin(mobjs: ArrayLike<RenderMobj>, count: number, ctx: RoyaleContext): void {
     this.ctx = ctx;

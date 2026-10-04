@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0706">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Doom Town</title>
 <link rel="icon" href="data:,">
 <meta name="description" content="Doom Town: 64-player deathmatch in your browser. Game art from the Freedoom project.">
@@ -119,6 +123,26 @@
 
   <dialog id="controls" class="dialog">
     <h2>Controls</h2>
+    <div class="touch-keys">
+      <div class="touch-diagram" aria-hidden="true">
+        <span class="td-top"><i></i><i></i><i></i><i></i></span>
+        <span class="td-stick"><i></i></span>
+        <span class="td-look">drag to look</span>
+        <span class="td-btn td-fire">FIRE</span><span class="td-btn td-jump">JUMP</span><span class="td-btn td-use">USE</span>
+        <span class="td-weap">‹ weapon ›</span>
+      </div>
+      <dl class="keys">
+        <dt>Move</dt><dd>Put your left thumb down anywhere on the left and slide: a little to walk, further to run</dd>
+        <dt>Look</dt><dd>Drag anywhere on the right</dd>
+        <dt>Fire</dt><dd>Hold <b>FIRE</b>; drag it to aim while you shoot</dd>
+        <dt>Jump, use</dt><dd><b>JUMP</b>; <b>USE</b> opens doors and crates, presses switches, gets in a vehicle</dd>
+        <dt>Weapons</dt><dd>Tap the weapon for the next one, or the arrows beside it</dd>
+        <dt>Top buttons</dt><dd>Menu, scores (hold), map (war, battle royale), chat</dd>
+        <dt>Battle royale</dt><dd><b>ZOOM</b> toggles the scope, <b>NADE</b> throws a grenade, <b>JUMP</b> leaves the dropship and opens the chute</dd>
+        <dt>Settings</dt><dd>In the menu: touch look speed, left-handed controls</dd>
+      </dl>
+      <h3>Keyboard and mouse</h3>
+    </div>
     <dl class="keys">
       <dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows</dd>
       <dt>Look</dt><dd>Mouse</dd>

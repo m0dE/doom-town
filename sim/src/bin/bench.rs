@@ -12,6 +12,9 @@ fn main() {
     if name == "br01" || name.ends_with(".wad") {
         return bench_br(&name, secs, args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1));
     }
+    if name == "war" || name.starts_with("WAR") {
+        return bench_war(if name == "war" { "WAR01" } else { &name }, secs);
+    }
     let wad = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/freedm.wad")).expect("assets/freedm.wad");
     let t = Instant::now();
     let map = Rc::new(Map::load(&extract_map_pwad(&wad, &name).expect("map")).expect("load"));
@@ -61,6 +64,45 @@ fn main() {
     println!("clone: {:.3} ms", t.elapsed().as_secs_f64() * 10.0);
     let frags: i32 = w.players.iter().map(|p| p.deaths).sum();
     println!("deaths in run: {} ({:.0}/min)", frags, frags as f64 / secs as f64 * 60.0);
+}
+
+/// war: 200 bots (100 v 100) on a war map
+///   cargo run --release --bin bench war|WAR02 [seconds]
+fn bench_war(map: &str, secs: u32) {
+    use doomsim::game::*;
+    let path = format!("{}/../public/maps/{}.map.wad", env!("CARGO_MANIFEST_DIR"), map);
+    let mut m = Map::load(&std::fs::read(&path).expect("wad")).expect("map");
+    m.id = 0;
+    let mut w = World::new_cfg(Config::mode(MODE_WAR, 200), vec![Rc::new(m)], 1);
+    let mut times: Vec<f64> = Vec::new();
+    for _ in 0..35 * secs {
+        let t0 = Instant::now();
+        w.tick();
+        times.push(t0.elapsed().as_secs_f64() * 1e3);
+    }
+    let total: f64 = times.iter().sum();
+    let mut s = times.clone();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    println!("war {} 200 bots, {} tics: avg {:.3} ms p50 {:.3} p99 {:.3} max {:.3}", map, s.len(), total / s.len() as f64, s[s.len() / 2], s[s.len() * 99 / 100], s[s.len() - 1]);
+    let mut buf = Vec::new();
+    let t = Instant::now();
+    let mut hsum = 0u32;
+    for _ in 0..100 {
+        hsum ^= w.hash_with(&mut buf);
+    }
+    println!("hash: {:.3} ms ({} bytes, {:08x})", t.elapsed().as_secs_f64() * 10.0, buf.len(), hsum);
+    let t = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(&w.clone());
+    }
+    println!("clone: {:.3} ms", t.elapsed().as_secs_f64() * 10.0);
+    #[cfg(feature = "prof")]
+    {
+        let p = doomsim::world::prof::get();
+        for (i, n) in ["bots", "reborn", "players", "thinkers", "plan", "goal", "mode"].iter().enumerate() {
+            println!("  {:8} total {:.1} ms ({:.3} ms/tic) max {:.3} ms", n, p[i].0, p[i].0 / s.len() as f64, p[i].1);
+        }
+    }
 }
 
 /// battle royale: a whole match with 64 bots on a mod / map PWAD

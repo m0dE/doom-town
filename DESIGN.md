@@ -274,7 +274,7 @@ shards, sniper, etc." Prior art: DooM Royale (Zandronum, 2018, up to 64 players)
 
 | mode | id | slots | teams | rules |
 |---|---|---|---|---|
-| Battle royale | 4 | 64 | – | one life; a shrinking zone; crates spill loot; last marine standing wins |
+| Battle royale | 4 | 100 (was 64; the user, 2026-10-04: "battle royale btw should be 100 players not 64") | – | one life; a shrinking zone; crates spill loot; last marine standing wins |
 
 - **Room names**: `br`, `royale`, `battle`, `pubg` pick it (`na-br-1`). Rotation key
   `battleRoyale`: `BR01`. No bosses; players collide (solid) unless the name says `ghost`.
@@ -411,7 +411,9 @@ should be contained within a single map file". Supersedes the 10 s freeze above.
   (lobby spots), a walled area away from the playfield (not inside the zone's
   bounding box; the zone and the bus use only DM starts / non-lobby spots). Players move,
   jump and shoot freely but nothing does damage (P_DamageMobj on players is a no-op in
-  the lobby); everyone has fist + pistol + 200 bullets there for fun; on leaving the
+  the lobby); fists only there — no shooting (the user, 2026-10-04: "don't allow
+  shooting in the lobby, maybe just allow fist attacks") — and a punch shoves the other
+  player (twice vanilla's thrust) instead of hurting; on leaving the
   lobby the kit resets to the starting kit. Joiners arriving in the lobby play this
   match. PlayerView[44]/match words show the countdown.
 - **Dropship / bus** (phase 5): a straight flight line across the playfield through a
@@ -497,7 +499,8 @@ As implemented (sim_version 9; `sim/src/drop.rs`, `sim/src/vehicle.rs`, `sim/src
   none); every spawn spot (DM starts included) within 512 units of the lobby spots'
   box is dropped, and with a lobby the playfield box (zone stage 0, flight line,
   skydiving clamp) is the spawn spots' box + 256. In the lobby nothing takes damage
-  (players, crates, buggies) and crates can't be used; kit fist + pistol + 200 bullets.
+  (players, crates, buggies) and crates can't be used; kit: fist only (no pistol, no
+  bullets), a punch on a player is a shove of 2x vanilla thrust.
 - **Drop**: line through the stage-0 centre ± r0/4 (P_Random x, y), P_Random angle
   (two bytes), from −r0 to +r0 along it (2·r0/24 tics; ~790 on BR01), at the highest
   floor + `drop_alt`. Boarding (everyone not dead, waiting joiners included) resets the
@@ -619,8 +622,8 @@ documentation page on how to build mod with examples".
 - **MODINFO** (format 1):
   ```json
   { "format": 1, "id": "br01", "title": "Doom Town Royale", "author": "Doom Town",
-    "license": "BSD-3-Clause", "description": "64 marines, one island, one survivor.",
-    "mode": "battle-royale", "map": "BR01", "slots": 64,
+    "license": "BSD-3-Clause", "description": "100 marines, one island, one survivor.",
+    "mode": "battle-royale", "map": "BR01", "slots": 100,
     "ghosts": false, "bosses": false,
     "rules": { "matchSeconds": 900, "lobbySeconds": 45, "dropAltitude": 4096,
                "startBullets": 20, "vehicles": true, "supplyDrops": true,
@@ -684,6 +687,146 @@ As implemented (check and docs):
 - `/modding.html` is `docs/MODDING.md` rendered into `modding.html` by a Vite plugin
   (`vite.config.js`, renderer `tools/mods/markdown.mjs`, no dependencies; styles
   `src/menu/modding.css`); it is a second build input next to `index.html`.
+
+## Mobile (requested 2026-10-04)
+
+The user: "btw are we mobile rdy?" — no: keyboard + pointer lock only — then "completely
+take care of this". Phones and tablets play the same rooms as desktops (same sim, same
+lockstep); only input, layout and rendering cost adapt.
+
+- **Touch mode** is on when the device's primary pointer is coarse
+  (`matchMedia('(pointer: coarse)')`) or a touch event arrives; `?touch=1` / `?touch=0`
+  force it. A mouse or key event on a hybrid device switches the on-screen controls off
+  again (and touch turns them back on).
+- **Controls** (`src/input/touch.ts`, drawn over the view, `touch-action: none`):
+  - **Move**: a floating stick — the thumb lands anywhere in the left ~40 % of the
+    screen and the stick centres there; deflection maps to forward/side analog
+    (walk under 60 %, run beyond).
+  - **Look**: drag anywhere on the right side (not on a button); the "Touch look speed"
+    setting scales it, Invert applies; a drag that starts on FIRE also looks, so the
+    right thumb can aim and shoot at once.
+  - **Buttons** (right thumb arc): FIRE (hold), JUMP, USE; weapon next / prev (or tap the
+    weapon icon to cycle); in battle royale ZOOM (tap toggles; the scope stays until
+    tapped again) and GRENADE.
+    Top bar: menu (pause), scoreboard (hold), map (rooms with a minimap), chat.
+  - Buttons are ≥ 48 CSS px, semi-transparent, placed inside `env(safe-area-inset-*)`,
+    with a pressed state; the layout follows the HUD scale and has a left-handed swap
+    in the settings.
+- **Starting a match on a phone**: no pointer lock; "TAP TO PLAY" instead of "CLICK TO
+  PLAY". The tap asks for fullscreen and `screen.orientation.lock('landscape')` where
+  the browser allows (Android Chrome; iOS Safari doesn't — there a "rotate your phone"
+  card shows in portrait). Leaving fullscreen pauses like losing pointer lock does.
+- **Page behaviour in play**: no pinch/double-tap zoom, no pull-to-refresh, no long-press
+  menus or text selection, `viewport-fit=cover`; the menu pages stay normal scrollable
+  pages.
+- **HUD on touch**: the minimal HUD by default (the status bar would sit under the
+  thumbs; the player can still pick it), the minimap collapses to a small button that
+  opens the large map, the killfeed and messages shrink, centre prompts read "TAP" for
+  "CLICK"/"PRESS".
+- **Menus** (start screen, server list, create room, Esc menu, controls, modding page):
+  usable at 360×640 portrait up to tablets — tap targets ≥ 44 px, dialogs scroll, the
+  Controls dialog shows the touch layout on touch devices.
+- **Graphics quality** (`prefs.quality`: auto / high / medium / low, in the Esc menu):
+  - high = today's renderer; medium = render scale 0.75 of the device pixels (capped
+    at DPR 2), bloom at half resolution, fewer dynamic lights; low = render scale ~0.5,
+    no bloom, the nearest few lights only, cheaper storm/smoke shaders.
+  - auto picks the start level from the device (touch, `deviceMemory`,
+    `hardwareConcurrency`, WebGL renderer string) and then adapts the render scale to
+    the measured frame time (aim ≥ 50 fps; step down after ~2 s slow, up after ~5 s
+    fast, never above the level's scale).
+  - An optional FPS counter in the Esc menu.
+- **CPU**: the sim runs every bot on every client; measured under Chrome's 4× and 6× CPU
+  throttle (a mid-range phone) per mode in `tools/test-mobile.mjs` — the page must keep
+  35 tics/s in deathmatch and battle royale. A client that falls behind is caught up by
+  arrr-network as on desktop.
+- **Tests**: `tools/test-mobile.mjs` runs the page as a phone (Playwright device
+  emulation: touch, 844×390 @3x landscape and 390×844 portrait, 4× CPU throttle): the
+  menu, Practice, moving with the stick, looking, firing, jumping, the Esc menu, a
+  battle royale lobby → drop → landing with touch only, and fps / tic rate; screenshots
+  in `docs/shots/mobile-*.jpg`.
+
+As implemented (touch, 2026-10-04):
+
+- `src/input/touch.ts` (+ `touch.css`): touch-mode detection (`html.touch-mode`;
+  coarse pointer, a touch, a moving mouse / a key outside a text field; `?touch=`
+  forces), fullscreen + `orientation.lock`, and `TouchControls`, a layer (`.tc`,
+  z 25, over the HUD, under the Esc menu) driven by Pointer Events by pointer id. Stick:
+  radius 52 × u px (u = min(w, h) / 400, 0.85-1.45), dead zone 12 %, circle-to-square
+  so a full diagonal runs both ways, the base follows a thumb dragged past 1.25 R.
+  Input shapes it: forward up to 25 at 60 % deflection, 50 at full (side 24 / 40).
+  Look: 0.0044 rad per CSS px × "Touch look speed" (0.2-3, default 1), vertical × 0.8,
+  × the scope's lookScale. Menu and chat act on the finger's lift (iOS shows the
+  keyboard only inside the gesture); scores is held; ZOOM toggles `zoom` in Input
+  (blur / menus clear it with everything else). While dead or in the intermission only
+  FIRE shows; war's spawn choices become buttons (weapon slot n).
+- Input: `locked` means "tapped to play" in touch mode; leaving a fullscreen we
+  entered calls `onMenu`; `releaseAll` also lets go of the fingers and the stick.
+- Prefs `touchLook`, `leftHanded`; `hud` defaults to the minimal HUD on a coarse
+  pointer. HUD `.touch`: the corner minimap hidden (the map button opens the large
+  one), feed 3 lines / 36 vw, messages under the top bar, chat at the top, the zone
+  line under the top row, TAP wording, touch lobby tips.
+- `?slots=N` (offline only) plays a room with fewer marines - the BR test uses 12 so
+  a slow machine reaches a crate before a bot does.
+
+As implemented (graphics quality and the CPU budget, 2026-10-04):
+
+- `src/render/quality.ts` holds the levels; `MapView` (`src/game/view.ts`) applies
+  `prefs.quality` to its renderer live (it listens to `onPrefs`, so the Esc menu's
+  Graphics row takes effect at once, no reload) and draws the FPS counter
+  (`prefs.showFps`: fps, the slowest frame of the last 0.5 s, level and render size;
+  left edge, 38 % down). Render scale is relative to CSS px × min(DPR, 2):
+
+  | level  | scale | bloom                         | dyn. lights | other                                                              |
+  |--------|-------|-------------------------------|-------------|--------------------------------------------------------------------|
+  | high   | 1     | full (5 levels from 1/2 res)  | 64          | as before (but the DPR cap is 2, was 1.5)                          |
+  | medium | 0.75  | half (4 levels from 1/4 res)  | 24          | 3D bodies beyond 2048 units drawn as sprites                       |
+  | low    | 0.5   | off (composite skips the tap) | 8           | storm 2 noise lookups/px (was 7), smoke half the puffs, sky dome a gradient, no grain, no contact darkening, 3D bodies beyond 1024 as sprites |
+
+  Body LOD has ±10 % hysteresis per body. Texture filtering costs nothing to cut (the
+  world samples with `texelFetch`).
+- **Auto**: software GL (SwiftShader, llvmpipe) → low; Adreno < 600, Adreno 6xx below
+  640, Mali-T, Mali-G5x, PowerVR / VideoCore → low; Adreno 640-699, Mali-G7x → medium;
+  any other touch device → medium, or low with ≤ 3 GB `deviceMemory` or ≤ 4 cores;
+  desktops → high (medium with ≤ 2 GB or ≤ 2 cores). Then the governor multiplies the
+  level's scale by one of 1, .85, .72, .6, .5, .42, .35 (never below 0.5 px per CSS px):
+  frames measured in 0.5 s chunks, < 48 fps for 4 chunks (2 s) → a step down, ≥ 57 fps
+  for 10 chunks (5 s) → a step up; 1.5 s settle after each change, gaps > 2 s (tab in
+  the background, loads) ignored. Against oscillation: a step that had to be left is
+  barred for 20 s, then 40 s, then for good; a step down that made frames < 5 % faster
+  (CPU bound) is taken back and further steps down are held off 30 s, 60 s, then for
+  good - so at most a few changes in a session (simulated in a script: GPU bound 2
+  changes, CPU bound 6, borderline 5, then none).
+- **CPU work done** (behaviour unchanged; `node tools/bench-mobile.mjs`):
+  - a world hash is a full serialize (war: 504 KB, 0.49 ms native = a whole tic). The
+    lockstep now hashes every 7th tic (`hashEvery`, `src/net/session.ts` `HASH_EVERY`),
+    5 a second; peers compare the frames they share, so mixed builds still compare.
+  - the prediction's rebuild serialized the confirmed world (BR: 2.3 ms) and hashed it
+    twice (1 ms each) only to clone it back: snapshot bytes are now taken lazily (when
+    read, or just before the world next changes or is freed - DoomSim tracks a change
+    stamp per world, which also replaces the hash in the clone check). The wrapper test
+    (patched for the current `DoomSim.create`) gives identical worlds and hashes.
+  - `recordOwnMissiles` no longer copies the predicted world's mobjs each predicted
+    tic when no missile weapon is up and none of ours is in the air.
+  - offline: the loopback node ticks by its own clock (missed timer periods are sent
+    late, up to 1 s a call; backlogs over 2 s dropped) like a real node, instead of
+    losing ticks whenever the page's main thread was busy.
+  - HUD, minimap and body posing measured small (≤ 0.3 ms a frame at 1×, 1-4 ms at 4×
+    in war / BR); not changed.
+- **Measured** (844×390 @3x, touch, headless Chromium, `Emulation.setCPUThrottlingRate`;
+  this machine renders with SwiftShader on 2 shared cores, so absolute fps is
+  meaningless - GPU numbers compare levels, the sim's tic rate is the hard check):
+  - CPU only (`--norender=1`, view not drawn): tics/s at 4× / 6×: deathmatch 34.9 /
+    35.1, war (200 bots) 35.4 / 37.4, BR01 (64, ground phase) 35.2 / 35.7; sim (ticks
+    incl. prediction re-sims) 19-27 % of the main thread at 4×, 21-44 % at 6×.
+    Before the changes: deathmatch 35.6 / 26.6, war 24.2 / 17.5, BR 24.9 / 20.3.
+  - With the view drawn (SwiftShader eating both cores), tics/s at 4× / 6×:
+    deathmatch high 35.4 / 24.7, medium 33.0 / 38.3, low 34.9 / 35.6; war high 34.3 /
+    38.5, medium 34.9 / 34.6, low 33.9 / 31.5; BR high 40.3 / 37.1, medium 35.1 / 37.5,
+    low 34.9 / 31.1 (> 35: catch-up bursts).
+  - One frame, render + read-back, same view, 1×: deathmatch high 1190 ms
+    (1688×780) / medium 992 (1266×585) / low 394 (844×390); war 2557 / 597 / 248;
+    BR 868 / 493 / 229 - low is 3-10× cheaper than high. Screenshots of the same view
+    per level: `docs/shots/mobile-quality-{dm,war,br}-{high,medium,low}.jpg`.
 
 ## Determinism
 
@@ -889,6 +1032,11 @@ Means of death `mod`: 0 world, 1 fist, 2 pistol, 3 shotgun, 4 chaingun, 5 rocket
   outcome. With no prediction to draw from, confirmed copies are drawn as usual.
   (A rival firing the same tic within 64 units of us could have a missile claimed as
   ours: it is then drawn from prediction too, which is harmless.)
+- The buggy we drive (PlayerView[55]) is drawn from the predicted world too, at
+  `selfAlpha` like the camera that rides it, and its confirmed copy is skipped: drawn
+  from the confirmed ring it trailed the camera by the prediction lead plus the playout
+  delay (at 28 units/tic, a car length or more - the user, 2026-10-04: "my camera moves
+  way ahead of where the vehicle actually is").
 - Player bodies: the 3D box marine (`src/model`, via `src/game/bodies.ts` on the
   renderer's `setPlayerBodyRenderer` hook) by default, Doom's sprites when the Esc menu
   says "Players: Classic sprites" (`prefs.players`). Corpses (PLAY mobjs no longer a

@@ -225,7 +225,7 @@ try {
   const brMap = ex.map_load(bp, bb.length)
   ex.dealloc(bp, bb.length)
   check(brMap >= 0, `BR01 map_load ${brMap}`)
-  const hbr = newCfg([2, 4, 64, 0, 0, 0, 0, 0, 0, 0, 1, brMap, 7])
+  const hbr = newCfg([2, 4, 100, 0, 0, 0, 0, 0, 0, 0, 1, brMap, 7])
   const ms = []
   let shipEnd = -1, end = -1
   for (let t = 0; t < 35 * 900 && end < 0; t++) {
@@ -248,8 +248,8 @@ try {
     for (let k = 0; k < n; k++) if (ev[k * 8] === 8) end = t
   }
   const s = ms.slice().sort((a, b) => a - b)
-  console.log(`BR 64 bots on BR01: ${ms.length} tics, avg ${(ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(3)} ms, p99 ${s[Math.floor(s.length * 0.99)].toFixed(3)} ms, max ${s[s.length - 1].toFixed(3)} ms; alive when the ship left ${shipEnd}; match ended at tic ${end}`)
-  check(end > 0 && shipEnd >= 45, 'BR01 match runs to a winner, the drop spreads out')
+  console.log(`BR 100 bots on BR01: ${ms.length} tics, avg ${(ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(3)} ms, p99 ${s[Math.floor(s.length * 0.99)].toFixed(3)} ms, max ${s[s.length - 1].toFixed(3)} ms; alive when the ship left ${shipEnd}; match ended at tic ${end}`)
+  check(end > 0 && shipEnd >= 70, 'BR01 match runs to a winner, the drop spreads out')
   ex.world_free(hbr)
 } catch (e) {
   if (e.code === 'ENOENT') console.log('public/mods/br01.wad not built: BR skipped'); else throw e

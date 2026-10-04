@@ -23,8 +23,12 @@ export class PauseMenu {
           <label class="opt check">Invert mouse <input type="checkbox" data-k="invertY"></label>
           <label class="opt">Field of view <input type="range" min="75" max="110" step="1" data-k="fov"><output></output></label>
           <label class="opt">Volume <input type="range" min="0" max="1" step="0.05" data-k="volume"><output></output></label>
+          <label class="opt touch-only">Touch look speed <input type="range" min="0.2" max="3" step="0.1" data-k="touchLook"><output></output></label>
+          <label class="opt check touch-only">Left-handed controls <input type="checkbox" data-k="leftHanded"></label>
           <div class="opt check">Status bar <span class="seg"><button type="button" data-hud="bar">Classic</button><button type="button" data-hud="full">Minimal</button></span></div>
           <div class="opt check">Players <span class="seg"><button type="button" data-players="3d">3D</button><button type="button" data-players="sprites">Classic sprites</button></span></div>
+          <div class="opt check">Graphics <span class="seg"><button type="button" data-quality="auto">Auto</button><button type="button" data-quality="high">High</button><button type="button" data-quality="medium">Medium</button><button type="button" data-quality="low">Low</button></span></div>
+          <label class="opt check">FPS counter <input type="checkbox" data-k="showFps"></label>
         </div>
         <div class="buttons">
           <button class="btn primary" type="button" data-act="resume">Back to the game</button>
@@ -52,6 +56,8 @@ export class PauseMenu {
       const hud = t.closest<HTMLElement>('[data-hud]')?.dataset.hud;
       if (hud === 'bar' || hud === 'full') { this.hooks.changed(savePrefs({ hud })); this.paint(); }
       const players = t.closest<HTMLElement>('[data-players]')?.dataset.players;
+      const quality = t.closest<HTMLElement>('[data-quality]')?.dataset.quality;
+      if (quality === 'auto' || quality === 'high' || quality === 'medium' || quality === 'low') { this.hooks.changed(savePrefs({ quality })); this.paint(); }
       if (players === '3d' || players === 'sprites') { this.hooks.changed(savePrefs({ players })); this.paint(); }
       if (t === this.root) this.hooks.resume();
     });
@@ -73,10 +79,11 @@ export class PauseMenu {
       if (el.type === 'checkbox') el.checked = !!p[k];
       else el.value = String(p[k]);
       const out = el.parentElement?.querySelector('output');
-      if (out) out.textContent = k === 'volume' ? `${Math.round(p.volume * 100)}%` : k === 'fov' ? `${p.fov}°` : String(p[k]);
+      if (out) out.textContent = k === 'volume' ? `${Math.round(p.volume * 100)}%` : k === 'fov' ? `${p.fov}°` : k === 'touchLook' ? `${p.touchLook.toFixed(1)}×` : String(p[k]);
     }
     for (const b of this.root.querySelectorAll<HTMLElement>('[data-hud]')) b.setAttribute('aria-pressed', String(b.dataset.hud === p.hud));
     for (const b of this.root.querySelectorAll<HTMLElement>('[data-players]')) b.setAttribute('aria-pressed', String(b.dataset.players === p.players));
+    for (const b of this.root.querySelectorAll<HTMLElement>('[data-quality]')) b.setAttribute('aria-pressed', String(b.dataset.quality === p.quality));
   }
 
   show(): void {

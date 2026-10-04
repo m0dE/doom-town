@@ -511,7 +511,23 @@ impl World {
             return;
         }
         if self.is_br() && self.g.phase == crate::game::PH_LOBBY {
-            // nothing takes damage in the lobby (players, crates, buggies)
+            // nothing takes damage in the lobby (players, crates, buggies); fists are the
+            // only weapon there, and a punch shoves a player instead (twice vanilla's thrust)
+            if inflictor != NONE && self.alive(inflictor) && self.player_of(target).is_some() {
+                let (ix, iy) = {
+                    let m = self.mo(inflictor);
+                    (m.x, m.y)
+                };
+                let (tx, ty, mass) = {
+                    let m = self.mo(target);
+                    (m.x, m.y, info(m.type_ as usize).mass.max(1))
+                };
+                let a = point_to_angle2(ix, iy, tx, ty);
+                let thrust = ((damage as i64 * (FRACUNIT >> 3) as i64 * 200) / mass as i64) as i32;
+                let m = self.mo_mut(target);
+                m.momx = m.momx.wrapping_add(fixed_mul(thrust, finecosine(fine(a))));
+                m.momy = m.momy.wrapping_add(fixed_mul(thrust, finesine(fine(a))));
+            }
             return;
         }
         if mod_ != crate::royale::MOD_ZONE {

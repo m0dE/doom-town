@@ -34,6 +34,7 @@ uniform sampler2D uLightReach; // R8: (sector, light) -> 0..1
 uniform sampler2D uLightTiles; // R8: (tile, 0) = count, (tile, k+1) = light index
 uniform vec2 uViewport;        // render target size in pixels
 uniform float uDynScale;
+uniform float uLowFx;          // 1: graphics quality low (cheaper effect paths)
 
 vec3 palColor(float idx, float level) {
   return texelFetch(uPal, ivec2(int(idx), int(uPalNum) * 34 + int(level)), 0).rgb;
@@ -243,10 +244,13 @@ void main() {
     if ((gflags & 2) != 0) { c = max(c, alb * 0.6); emis = 0.35 * smoothstep(0.1, 0.5, luma(alb)); }
     if ((gflags & 1) != 0) { float b = smoothstep(0.30, 0.55, luma(alb)); c = mix(c, alb, b * 0.9); emis = b; }
   }
-  vec2 aoUV = (vWorld.xy - uAoXform.xy) * uAoXform.zw;
-  vec2 aoS = texture(uAo, aoUV).rg;
-  float aoV = vInfo.z > 0.5 ? aoS.g : aoS.r;
-  float ao = mix(1.0 - 0.5 * uAoStrength, 1.0, smoothstep(0.0, 1.0, aoV));
+  float ao = 1.0;
+  if (uAoStrength > 0.0) {
+    vec2 aoUV = (vWorld.xy - uAoXform.xy) * uAoXform.zw;
+    vec2 aoS = texture(uAo, aoUV).rg;
+    float aoV = vInfo.z > 0.5 ? aoS.g : aoS.r;
+    ao = mix(1.0 - 0.5 * uAoStrength, 1.0, smoothstep(0.0, 1.0, aoV));
+  }
   vec3 n = vec3(0.0, 0.0, vInfo.z > 0.5 ? -1.0 : 1.0);
   vec3 dl = dynLight(vWorld, n, int(vInfo.y), 0.0);
   fragColor = vec4(max(c * ao + alb * dl, 0.0), emis);
@@ -521,7 +525,8 @@ vec3 toSRGB(vec3 c) {
 }
 float hash(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 void main() {
-  vec3 c = texture(uScene, vUv).rgb + texture(uBloom, vUv).rgb * uBloomStrength;
+  vec3 c = texture(uScene, vUv).rgb;
+  if (uBloomStrength > 0.0) c += texture(uBloom, vUv).rgb * uBloomStrength;
   if (uStorm > 0.0) {
     // inside the storm: desaturated purple, darker toward the edges, breathing
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -533,7 +538,7 @@ void main() {
     c = mix(c, storm, uStorm * 0.75);
   }
   c = toSRGB(shoulder(c));
-  c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * uGrain;
+  if (uGrain > 0.0) c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * uGrain;
   fragColor = vec4(c, 1.0);
 }
 `;

@@ -73,10 +73,17 @@ void main() {
   }
   float t = uTime;
   vec3 p = vec3(vWorld.xy / 420.0, vWorld.z / 640.0);
-  // rising, swirling bands
-  float n = fbm(p + vec3(t * 0.03, t * 0.02, -t * 0.22));
-  float m = fbm(p * vec3(3.1, 3.1, 2.3) + vec3(-t * 0.07, t * 0.05, -t * 0.45) + n * 1.5);
-  float streak = smoothstep(0.55, 0.95, vnoise3(vec3(vWorld.xy / 90.0, vWorld.z / 2400.0 - t * 0.35)));
+  // rising, swirling bands (graphics quality low: one octave each, no streaks - 2 noise
+  // lookups a pixel instead of 7 on a wall that can fill the screen)
+  float n, m, streak = 0.0;
+  if (uLowFx > 0.5) {
+    n = vnoise3(p + vec3(t * 0.03, t * 0.02, -t * 0.22));
+    m = vnoise3(p * vec3(3.1, 3.1, 2.3) + vec3(-t * 0.07, t * 0.05, -t * 0.45) + n * 1.5);
+  } else {
+    n = fbm(p + vec3(t * 0.03, t * 0.02, -t * 0.22));
+    m = fbm(p * vec3(3.1, 3.1, 2.3) + vec3(-t * 0.07, t * 0.05, -t * 0.45) + n * 1.5);
+    streak = smoothstep(0.55, 0.95, vnoise3(vec3(vWorld.xy / 90.0, vWorld.z / 2400.0 - t * 0.35)));
+  }
   vec3 deep = vec3(0.16, 0.04, 0.42), bright = vec3(0.52, 0.30, 1.0);
   vec3 c = mix(deep, bright, m) + vec3(0.6, 0.5, 1.0) * streak * 0.35;
   // looking along the wall (grazing) it is thicker

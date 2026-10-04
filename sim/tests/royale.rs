@@ -87,7 +87,7 @@ fn count_type(w: &World, t: usize) -> usize {
 #[test]
 fn br_config_defaults() {
     let c = Config::mode(MODE_BR, 0);
-    assert_eq!((c.mode, c.slots, c.match_tics, c.br.lobby_tics, c.br.drop_alt, c.br.start_bullets), (MODE_BR, 64, 35 * 900, 35 * 45, 4096, 20));
+    assert_eq!((c.mode, c.slots, c.match_tics, c.br.lobby_tics, c.br.drop_alt, c.br.start_bullets), (MODE_BR, 100, 35 * 900, 35 * 45, 4096, 20));
     assert!(c.br.vehicles && c.br.supply && c.br.stages.len() == 5 && c.br.loot.len() == LOOT.len());
     assert!(!c.teams());
     assert!(!Config { flags: 1, ..c.clone() }.bosses());
@@ -544,7 +544,7 @@ fn br_joiner_waits() {
     assert_eq!(w.g.phase, PH_INTER, "one marine left");
 }
 
-/// BR01 (the battle royale map) once it ships: a short smoke with 64 bots
+/// BR01 (the battle royale map) once it ships: a short smoke with a full room of 100 bots
 #[test]
 fn br01_smoke() {
     let pw = match mod_br01() {
@@ -556,8 +556,8 @@ fn br01_smoke() {
     };
     let reg = load_reg(&pw);
     let crates = count_type(&World::new_cfg(Config::mode(MODE_BR, 1), reg.clone(), 1), mt::CRATE);
-    let mut w = World::new_cfg(fast(Config::mode(MODE_BR, 64)), reg.clone(), 99);
-    let mut b = World::new_cfg(fast(Config::mode(MODE_BR, 64)), reg.clone(), 99);
+    let mut w = World::new_cfg(fast(Config::mode(MODE_BR, 100)), reg.clone(), 99);
+    let mut b = World::new_cfg(fast(Config::mode(MODE_BR, 100)), reg.clone(), 99);
     let st = run_stats(&mut w, 35 * 150);
     for _ in 0..35 * 150 {
         b.tick();
@@ -571,7 +571,7 @@ fn br01_smoke() {
         w.map.spawn_spots.len(), crates, count_type(&w, mt::CRATE), w.br_alive().len(), w.br_view(), st.deaths, st.items, st.stuck_events, st.out_of_map,
         st.total_us / st.tics as u128, st.p99_us, st.max_tic_us
     );
-    assert!(w.map.spawn_spots.len() >= 64);
+    assert!(w.map.spawn_spots.len() >= 100);
     assert!(crates > 0);
     assert!(count_type(&w, mt::CRATE) < crates, "crates get opened");
     assert!(st.deaths > 0);
@@ -617,7 +617,7 @@ fn lobby_drop_landing_br01() {
     assert!(map.spawn_spots.iter().all(|s| !in_lobby((s.x as i32) << FRACBITS, (s.y as i32) << FRACBITS)), "no spawn spot on the lobby island");
     println!("BR01: {} spawn spots, {} lobby spots, {} buggies, {} snipers, {} grenade packs", map.spawn_spots.len(), map.lobby_spots.len(),
         map.things.iter().filter(|t| t.type_ == 9040).count(), map.things.iter().filter(|t| t.type_ == 9050).count(), map.things.iter().filter(|t| t.type_ == 9051).count());
-    let mut cfg = Config::mode(MODE_BR, 64);
+    let mut cfg = Config::mode(MODE_BR, 100);
     cfg.br.lobby_tics = 35 * 8;
     let mut w = World::new_cfg(cfg, reg, 1234);
     assert_eq!(w.g.phase, PH_LOBBY);
@@ -631,7 +631,7 @@ fn lobby_drop_landing_br01() {
         for p in &w.players {
             if let Some(h) = w.deref(p.mo) {
                 assert!(in_lobby(w.mo(h).x, w.mo(h).y), "lobby on the island");
-                assert!(p.ammo[0] > 100 && p.ammo[0] <= 200, "200 bullets in the lobby");
+                assert!(p.ammo[0] == 0 && !p.weaponowned[WP_PISTOL as usize] && p.readyweapon == WP_FIST, "fists only in the lobby");
             }
         }
     }
@@ -661,7 +661,13 @@ fn lobby_drop_landing_br01() {
                 landings += 1;
                 let p = &w.players[e.a as usize];
                 let h = w.deref(p.mo).unwrap();
-                assert!(!in_lobby(w.mo(h).x, w.mo(h).y), "landed on the playfield");
+                // on the playfield: in the main area (connected both ways with the DM starts,
+                // which the sealed island is not) and off the island's spots
+                let (x, y) = (w.mo(h).x, w.mo(h).y);
+                let ss = w.map.point_in_subsector(x, y);
+                let (ux, uy) = (x >> FRACBITS, y >> FRACBITS);
+                let on_island = ux >= lx0 && ux <= lx1 && uy >= ly0 && uy <= ly1;
+                assert!(w.map.nav.reach[ss] && !on_island, "landed on the playfield: ({}, {}) vs the lobby box ({}, {})..({}, {}); event at ({}, {})", ux, uy, lx0, ly0, lx1, ly1, e.x >> FRACBITS, e.y >> FRACBITS);
                 assert_eq!(p.ammo[0], 20, "starting kit");
                 assert!(p.weaponowned[0] && p.weaponowned[1] && !p.weaponowned[2]);
             }
@@ -670,14 +676,14 @@ fn lobby_drop_landing_br01() {
             drop_end = t;
             let alive = w.br_alive().len();
             println!("BR01: {} alive when the ship reaches the end of its line", alive);
-            assert!(alive >= 45, "landings spread out: {} alive at the end of the line", alive);
+            assert!(alive >= 70, "landings spread out: {} alive at the end of the line", alive);
             assert_eq!(count_type(&w, mt::DROPSHIP), 0);
         }
         if drop_end > 0 && t > drop_end + 35 * 30 {
             break;
         }
     }
-    let airborne: Vec<usize> = (0..64).filter(|&i| w.players[i].air != 0).collect();
+    let airborne: Vec<usize> = (0..100).filter(|&i| w.players[i].air != 0).collect();
     println!("BR01 drop: ship line {} tics, {} landings, {} chutes at once, still airborne {:?}", drop_end, landings, max_para, airborne);
     assert!(airborne.is_empty(), "nobody stuck in the air");
     assert!(tracked > 1000);
@@ -994,4 +1000,42 @@ fn parachuter_view_tracks_player() {
     }
     println!("parachuter z: {:?}", seen.iter().step_by(20).collect::<Vec<_>>());
     assert!(seen.len() > 50 && seen.first().unwrap() - seen.last().unwrap() > 1000, "it comes down");
+}
+
+/// the lobby is fists only: no bullets to fire, and a punch shoves instead of hurting
+#[test]
+fn lobby_fists_shove_without_damage() {
+    let reg = load_reg(&public_map("WAR01").expect("WAR01"));
+    let mut cfg = Config::mode(MODE_BR, 2);
+    cfg.br.lobby_tics = 35 * 60;
+    let mut w = World::new_cfg(cfg, reg, 7);
+    w.human_join(0);
+    w.human_join(1);
+    for _ in 0..35 {
+        w.tick();
+    }
+    assert_eq!(w.g.phase, PH_LOBBY);
+    for p in &w.players {
+        assert!(p.readyweapon == WP_FIST && !p.weaponowned[WP_PISTOL as usize] && p.ammo[AM_CLIP as usize] == 0, "fists only");
+    }
+    let (tx, ty) = spot_ahead(&w, 48);
+    let h1 = w.deref(w.players[1].mo).unwrap();
+    assert!(w.teleport_move(h1, tx, ty));
+    let mut hurt = 0;
+    let mut moved = 0;
+    for t in 0..35 * 3u32 {
+        let h1 = w.deref(w.players[1].mo).unwrap();
+        let (ex, ey) = (w.mo(h1).x, w.mo(h1).y);
+        face(&mut w, ex, ey, if t % 2 == 0 { 1 } else { 0 }, 0);
+        w.tick();
+        hurt += w.events.iter().filter(|e| e.kind == 4 || e.kind == 2).count();
+        let m = w.mo(w.deref(w.players[1].mo).unwrap());
+        moved = moved.max(aprox_distance(m.x - tx, m.y - ty) >> FRACBITS);
+        // a 2-switch (pistol) does nothing: there is no pistol
+        w.set_cmd(0, 0, 0, 0, 0, 2 << 4);
+    }
+    assert_eq!(hurt, 0, "nothing hurts in the lobby");
+    assert_eq!(w.players[1].health, 100);
+    assert_eq!(w.players[0].readyweapon, WP_FIST);
+    assert!(moved >= 24, "punches shove the other marine ({} units)", moved);
 }

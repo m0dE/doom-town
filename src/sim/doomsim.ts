@@ -41,7 +41,12 @@ export interface DoomSnapshot { w: string; ids: string[] }
 export interface Cmd { angle: number; pitch: number; forward: number; side: number; buttons: number }
 
 const SRC = Symbol('doomsim.src');
-interface Source { sim: DoomSim; h: number; tic: number; hash: number; bytes: Uint8Array }
+/**
+ * A snapshot's world: the handle and its generation when taken (DoomSim.gen), and the
+ * bytes - read lazily, but always as the world was then (DoomSim captures them before
+ * the world is next changed or freed).
+ */
+interface Source { sim: DoomSim; h: number; gen: number; readonly bytes: Uint8Array }
 
 const EMPTY = new Int32Array(0);
 /** Battle royale words after the boss words in world_view_match: 11 in sim_version 8, 19 from 9 (DESIGN.md "Battle royale v2"). */
@@ -66,6 +71,15 @@ export class DoomSim {
   private readonly names = new Map<number, { textures: string[]; flats: string[] }>();
   /** Worlds alive in this module, so a stale handle is never cloned. */
   private readonly live = new Set<number>();
+  /**
+   * Per world, a stamp that changes whenever the world does (a tic, a cmd, a join...):
+   * a snapshot taken at the same stamp names an identical world. Stamps come from one
+   * counter, so a reused handle never repeats an old one.
+   */
+  private readonly gens = new Map<number, number>();
+  private genSeq = 0;
+  /** snapshot byte captures waiting on a world: run before it changes or is freed */
+  private readonly beforeChange = new Map<number, (() => void)[]>();
 
   private constructor(readonly ex: DoomSimExports, ids: Map<string, number>) {
     this.spriteNames = readNames(ex, ex.sim_sprite_names());
@@ -120,23 +134,47 @@ export class DoomSim {
     const h = this.ex.world_new_cfg(at, bytes);
     this.ex.dealloc(ptr, bytes + 4);
     if (h <= 0) throw new Error(`world_new_cfg failed (${h})`);
-    this.live.add(h);
+    this.born(h);
     return h;
   }
 
   clone(h: number): number {
     const h2 = this.ex.world_clone(h);
     if (h2 <= 0) throw new Error(`world_clone failed (${h2})`);
-    this.live.add(h2);
+    this.born(h2);
     return h2;
   }
 
   free(h: number): void {
-    if (!this.live.delete(h)) return;
+    if (!this.live.has(h)) return;
+    this.changing(h);
+    this.live.delete(h);
+    this.gens.delete(h);
     this.ex.world_free(h);
   }
 
   isLive(h: number): boolean { return this.live.has(h); }
+
+  /** The world's current stamp (see `gens`); 0 for a handle that is not alive. */
+  gen(h: number): number { return this.gens.get(h) ?? 0; }
+
+  /** Run `f` before world `h` next changes or is freed (once). */
+  onBeforeChange(h: number, f: () => void): void {
+    const l = this.beforeChange.get(h);
+    if (l) l.push(f); else this.beforeChange.set(h, [f]);
+  }
+
+  private born(h: number): void {
+    this.live.add(h);
+    this.gens.set(h, ++this.genSeq);
+  }
+
+  /** World `h` is about to change: pending captures first, then a new stamp. */
+  private changing(h: number): void {
+    const l = this.beforeChange.get(h);
+    if (l) { this.beforeChange.delete(h); for (const f of l) f(); }
+    if (this.gens.has(h)) this.gens.set(h, ++this.genSeq);
+  }
 
   serialize(h: number): Uint8Array {
     const len = this.ex.world_serialize(h);
@@ -149,18 +187,19 @@ export class DoomSim {
     const h = this.ex.world_deserialize(ptr, bytes.length);
     this.ex.dealloc(ptr, bytes.length);
     if (h <= 0) throw new Error('world_deserialize refused the snapshot');
-    this.live.add(h);
+    this.born(h);
     return h;
   }
 
   hash(h: number): number { return this.ex.world_hash(h) >>> 0; }
   tic(h: number): number { return this.ex.world_tic(h) >>> 0; }
-  tick(h: number): void { this.ex.world_tick(h); }
+  tick(h: number): void { this.changing(h); this.ex.world_tick(h); }
   freeSlot(h: number): number { return this.ex.world_free_slot(h); }
-  join(h: number, slot: number): void { this.ex.world_human_join(h, slot); }
-  leave(h: number, slot: number): void { this.ex.world_human_leave(h, slot); }
-  idle(h: number, slot: number): void { this.ex.world_human_idle(h, slot); }
+  join(h: number, slot: number): void { this.changing(h); this.ex.world_human_join(h, slot); }
+  leave(h: number, slot: number): void { this.changing(h); this.ex.world_human_leave(h, slot); }
+  idle(h: number, slot: number): void { this.changing(h); this.ex.world_human_idle(h, slot); }
   setCmd(h: number, slot: number, c: Cmd): void {
+    this.changing(h);
     this.ex.world_set_cmd(h, slot, c.angle, c.pitch, c.forward, c.side, c.buttons);
   }
 
@@ -356,17 +395,22 @@ export function createDoomApp(sim: DoomSim, opts: { slots?: number; rev?: string
     },
 
     serialize(s): DoomSnapshot {
-      // The bytes are taken now (a memcpy out of wasm, ~1 ms for a full room):
-      // a transport may hold the payload and read it later, after this world
-      // has stepped on. Only the base64 is deferred until something reads `w`.
-      const bytes = sim.serialize(s.h);
-      const src: Source = { sim, h: s.h, tic: sim.tic(s.h), hash: sim.hash(s.h), bytes };
+      // A transport may hold the payload and read it later, after this world has
+      // stepped on, so the bytes must be the world as it is now - but serializing is
+      // a whole tic's work in a war room, and the prediction's rebuild (the common
+      // caller) only clones the world back. So the bytes are taken when first read,
+      // or just before the world next changes or is freed, whichever comes first.
+      const h = s.h;
+      let bytes: Uint8Array | null = null;
+      const take = (): Uint8Array => (bytes ??= sim.serialize(h));
+      const src: Source = { sim, h, gen: sim.gen(h), get bytes() { return take(); } };
+      sim.onBeforeChange(h, () => { take(); });
       let text: string | null = null;
       const out = { ids: [...s.ids] } as DoomSnapshot;
       Object.defineProperty(out, 'w', {
         enumerable: true,
         get() {
-          if (text === null) { stats.encodes++; text = toBase64(bytes); }
+          if (text === null) { stats.encodes++; text = toBase64(take()); }
           return text;
         },
       });
@@ -381,8 +425,8 @@ export function createDoomApp(sim: DoomSim, opts: { slots?: number; rev?: string
       const src = snap[SRC];
       if (src && src.sim === sim) {
         // Our own payload, straight back (the prediction's rebuild): a clone
-        // while the world it names is untouched, else the bytes it captured.
-        if (sim.isLive(src.h) && sim.tic(src.h) === src.tic && sim.hash(src.h) === src.hash) {
+        // while the world it names is untouched (same stamp), else the bytes it captured.
+        if (sim.isLive(src.h) && sim.gen(src.h) === src.gen) {
           stats.clones++;
           return { h: sim.clone(src.h), ids, ev: EMPTY };
         }

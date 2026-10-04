@@ -40,7 +40,7 @@ export class PostFX {
     this.upM = pass(BLOOM_UP_FS, { uSrc: { value: null }, uBase: { value: null }, uTexel: { value: new THREE.Vector2() } });
     this.composite = pass(COMPOSITE_FS, {
       uScene: { value: this.scene.texture }, uBloom: { value: null }, uBloomStrength: { value: 0 },
-      uTime: { value: 0 }, uGrain: { value: 0.012 },
+      uTime: { value: 0 }, uGrain: { value: 0.012 }, uStorm: { value: 0 },
     });
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));

@@ -172,6 +172,19 @@ pub struct Player {
     pub spawn_choice: i32,
     /// elimination: which living player a dead one watches (cycled with attack)
     pub spec_cycle: i32,
+    /// battle royale v2: 0 none, 1 in the ship, 2 freefall, 3 parachute (drop.rs)
+    pub air: u8,
+    /// the virtual position while airborne, and the view yaw
+    pub ax: Fixed,
+    pub ay: Fixed,
+    pub az: Fixed,
+    pub aangle: Angle,
+    /// the MT_PARACHUTER mirroring an airborne player
+    pub air_mo: MRef,
+    /// the buggy this player drives (vehicle.rs)
+    pub vehicle: MRef,
+    pub grenades: i32,
+    pub grenade_cd: i32,
     pub bot: crate::bots::Bot,
 }
 
@@ -221,6 +234,15 @@ impl Player {
             travelled: 0,
             spawn_choice: -1,
             spec_cycle: 0,
+            air: 0,
+            ax: 0,
+            ay: 0,
+            az: 0,
+            aangle: 0,
+            air_mo: MRef::NULL,
+            vehicle: MRef::NULL,
+            grenades: 0,
+            grenade_cd: 0,
             bot: crate::bots::Bot::new(slot as u32),
         }
     }
@@ -455,6 +477,10 @@ impl World {
             p.fresh = false;
             p.bot.reset();
             p.bot.goal_point = -1;
+            p.air = 0;
+            p.air_mo = MRef::NULL;
+            p.vehicle = MRef::NULL;
+            p.grenades = 0;
         }
         let things = map.things.clone();
         for t in &things {
@@ -624,6 +650,8 @@ impl World {
         for i in 0..self.players.len() {
             if self.deref(self.players[i].mo).is_some() {
                 self.player_think(i);
+            } else if self.players[i].air != 0 {
+                self.air_tick(i);
             }
             let b = self.players[i].cmd.buttons;
             self.players[i].prev_buttons = b;
@@ -679,6 +707,8 @@ impl World {
                 p.fresh = true;
                 p.playerstate = PST_REBORN;
                 p.bot.reset();
+                self.leave_vehicle(slot, true);
+                self.clear_air(slot);
                 self.remove_player_body(slot);
             }
         }
@@ -719,7 +749,7 @@ impl World {
             pitch: pitch.clamp(-32768, 32767) as i16,
             forward: forward.clamp(-50, 50) as i8,
             side: side.clamp(-40, 40) as i8,
-            buttons: (buttons & 0x3ff) as u16,
+            buttons: (buttons & 0x7ff) as u16,
         };
     }
 
@@ -764,6 +794,8 @@ impl World {
         p.extralight = 0;
         p.fixedcolormap = 0;
         p.psprites = [Psp::default(); 2];
+        p.grenades = 0;
+        p.grenade_cd = 0;
         p.dead_tics = 0;
         p.jump_cooldown = 0;
         p.viewheight = VIEWHEIGHT;
@@ -869,15 +901,42 @@ impl World {
     /// G_DeathMatchSpawnPlayer, extended with the generated spawn spots
     pub fn deathmatch_spawn_player(&mut self, slot: usize) {
         let map = self.map.clone();
-        let cands = self.spawn_candidates(slot);
+        // battle royale: the lobby island's spots (things 9030) when the map has them
+        let lobby = self.is_br() && !map.lobby_spots.is_empty();
+        let spots: &[MapThing] = if lobby { &map.lobby_spots } else { &map.spawn_spots };
+        let cands = if lobby { (0..spots.len()).collect() } else { self.spawn_candidates(slot) };
         let n = cands.len();
         if n == 0 {
             return;
         }
+        if self.is_br() {
+            // battle royale: spread out over the map: the spots farthest from everyone placed
+            // so far first, starting at a random one of the best 8
+            let live: Vec<(Fixed, Fixed)> = self.players.iter().filter(|p| p.playerstate == PST_LIVE).filter_map(|p| self.deref(p.mo)).map(|h| (self.mo(h).x, self.mo(h).y)).collect();
+            let mut order: Vec<(i64, usize)> = cands
+                .iter()
+                .map(|&i| {
+                    let (sx, sy) = ((spots[i].x as i32) << FRACBITS, (spots[i].y as i32) << FRACBITS);
+                    (live.iter().map(|&(x, y)| crate::royale::dist2(x, y, sx, sy)).min().unwrap_or(i64::MAX), i)
+                })
+                .collect();
+            // stable: equal distances keep the spot order
+            order.sort_by_key(|a| std::cmp::Reverse(a.0));
+            let top = order.len().min(8);
+            let r = self.p_random() as usize % top;
+            order[..top].rotate_left(r);
+            for &(_, i) in &order {
+                let spot = spots[i];
+                if self.check_spot(slot, &spot) {
+                    self.spawn_player(slot, &spot);
+                    return;
+                }
+            }
+        }
         for _ in 0..20 {
             let r = (self.p_random() << 8) | self.p_random();
             let i = cands[(r as usize) % n];
-            let spot = map.spawn_spots[i];
+            let spot = spots[i];
             if self.check_spot(slot, &spot) {
                 self.spawn_player(slot, &spot);
                 return;
@@ -886,7 +945,7 @@ impl World {
         // scan for any free spot, starting at a random one
         let start = (self.p_random() as usize * n) / 256;
         for k in 0..n {
-            let spot = map.spawn_spots[cands[(start + k) % n]];
+            let spot = spots[cands[(start + k) % n]];
             if self.check_spot(slot, &spot) {
                 self.spawn_player(slot, &spot);
                 return;
@@ -895,7 +954,7 @@ impl World {
         // crowded: try positions around the spots
         for ring in [48i16, 96, 144] {
             for k in 0..n {
-                let spot = map.spawn_spots[cands[(start + k) % n]];
+                let spot = spots[cands[(start + k) % n]];
                 for (dx, dy) in [(1i16, 0i16), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
                     let cand = MapThing { x: spot.x.saturating_add(dx * ring), y: spot.y.saturating_add(dy * ring), ..spot };
                     let x = (cand.x as i32) << FRACBITS;

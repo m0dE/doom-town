@@ -79,6 +79,11 @@
       <span class="sep">·</span>
       <a id="source" href="https://github.com/m0dE/doom-town" target="_blank" rel="noopener">Source code</a>
       <span class="sep">·</span>
+      <a id="modding" href="modding.html" target="_blank" rel="noopener">Make a mod</a>
+      <span class="sep">·</span>
+      <button id="test-mod-btn" class="link" type="button" title="Play a mod WAD from your disk, offline against bots">Test a mod file…</button>
+      <input id="test-mod-file" type="file" accept=".wad,.WAD" hidden>
+      <span class="sep">·</span>
       <span class="muted" id="build"></span>
     </footer>
   </main>
@@ -98,6 +103,10 @@
       <fieldset>
         <legend>Mode</legend>
         <div id="create-modes" class="create-modes"></div>
+      </fieldset>
+      <fieldset id="create-mods-set">
+        <legend>…or a mod</legend>
+        <div id="create-mods" class="create-modes"></div>
       </fieldset>
       <label class="check"><input id="create-bosses" type="checkbox"> Random bosses</label>
       <p id="create-preview" class="muted create-preview"></p>
@@ -120,6 +129,11 @@
       <dt>Weapons</dt><dd><kbd>1</kbd>–<kbd>7</kbd>, mouse wheel, <kbd>Q</kbd> for the previous one</dd>
       <dt>Scores</dt><dd>Hold <kbd>Tab</kbd></dd>
       <dt>Chat</dt><dd><kbd>T</kbd> or <kbd>Enter</kbd></dd>
+      <dt>Map (war, battle royale)</dt><dd><kbd>M</kbd></dd>
+      <dt>Zoom / scope (battle royale)</dt><dd>Hold right click or <kbd>Z</kbd></dd>
+      <dt>Grenade (battle royale)</dt><dd><kbd>G</kbd></dd>
+      <dt>Open a crate, enter a vehicle</dt><dd><kbd>E</kbd></dd>
+      <dt>Leave the dropship, open the chute</dt><dd><kbd>Space</kbd></dd>
       <dt>Menu</dt><dd><kbd>Esc</kbd></dd>
     </dl>
     <form method="dialog"><button class="btn small" type="submit">Close</button></form>

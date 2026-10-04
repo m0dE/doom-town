@@ -24,6 +24,9 @@ pub mod random;
 pub mod serialize;
 pub mod sight;
 pub mod specials;
+pub mod drop;
+pub mod royale;
+pub mod vehicle;
 pub mod spots;
 pub mod teams;
 pub mod game;
@@ -33,4 +36,4 @@ pub mod user;
 pub mod world;
 
 /// bump on any change to sim behaviour or layout
-pub const SIM_VERSION: u32 = 7;
+pub const SIM_VERSION: u32 = 9;

@@ -212,7 +212,7 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* mode tabs over the server list */
-.mode-tabs { display: flex; gap: 4px; padding: 0 14px 10px; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
+.mode-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 10px; flex-shrink: 0; }
 .mode-tabs button { flex-shrink: 0; padding: 7px 9px; white-space: nowrap; border-radius: 3px; border: 1px solid rgba(255, 130, 70, .18); background: rgba(0, 0, 0, .3);
   font: 700 12px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .mode-tabs button small { margin-left: 6px; font: 600 11px/1 var(--ui); letter-spacing: 0; color: rgba(255, 255, 255, .35); }
@@ -222,3 +222,6 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
 .srv-mode .badge { margin-left: 6px; padding: 2px 6px; border-radius: 3px; font: 800 10px/1 var(--display); letter-spacing: .12em;
   text-transform: uppercase; font-style: normal; color: #ffd8b0; background: rgba(255, 106, 58, .16); border: 1px solid rgba(255, 106, 58, .4); white-space: nowrap; }
 .srv-mode .badge.boss { color: #fff; background: linear-gradient(#c4160f, #6d0904); border-color: #ff6a3a; }
+.badge.mod { display: inline-block; margin-left: 6px; padding: 2px 6px; border-radius: 3px; font: 800 10px/1 var(--display); letter-spacing: .12em;
+  color: #10240c; background: linear-gradient(#9cff6a, #4fb52c); border: 1px solid #c8ff9a; vertical-align: middle; }
+.srv-map .by { color: var(--muted); font-size: 11px; }

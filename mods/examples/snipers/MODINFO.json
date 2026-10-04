@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "id": "snipers",
+  "title": "Snipers Only Royale",
+  "author": "Doom Town examples",
+  "license": "BSD-3-Clause",
+  "description": "Doom Town with crates full of sniper rifles and a storm that closes in under four minutes. The modding guide's third example.",
+  "mode": "battle-royale",
+  "map": "BR01",
+  "slots": 64,
+  "rules": {
+    "matchSeconds": 420,
+    "lobbySeconds": 30,
+    "startBullets": 40,
+    "vehicles": true,
+    "supplyDrops": true,
+    "zone": [
+      { "wait": 30, "shrink": 30, "radius": 50, "dps": 2 },
+      { "wait": 25, "shrink": 25, "radius": 25, "dps": 4 },
+      { "wait": 20, "shrink": 20, "radius": 10, "dps": 8 },
+      { "wait": 15, "shrink": 20, "radius": 0, "dps": 15 }
+    ],
+    "loot": {
+      "healthBonus": 15, "armorBonus": 15, "stimpack": 10, "medikit": 6, "greenArmor": 5, "blueArmor": 1,
+      "shotgun": 0, "superShotgun": 0, "chaingun": 0, "rocketLauncher": 0, "plasma": 0, "bfg": 0,
+      "bullets": 20, "shells": 0, "rockets": 0, "cells": 0, "backpack": 4, "berserk": 2, "soulsphere": 0.5,
+      "sniper": 30, "grenades": 8
+    }
+  }
+}

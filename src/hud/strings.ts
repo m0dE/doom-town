@@ -44,6 +44,9 @@ const PICKUPS: Record<number, string> = {
   76: 'You got the plasma gun!',
   77: 'You got the shotgun!',
   78: 'You got the super shotgun!',
+  // battle royale v2 (mobjtypes 141 sniper rifle, 143 grenade pack)
+  141: 'You got the sniper rifle!',
+  143: 'Picked up 2 grenades.',
 };
 const MEDIKIT = 54, MEDINEED = 'Picked up a medikit that you REALLY need!';
 /** A clip dropped by a dead player is MT_CLIP too; Doom says the same thing. */
@@ -56,7 +59,7 @@ export function pickupMessage(type: number, health: number): string | null {
 }
 
 /** True for the pickups that are weapons (the face grins, the sound is wpnup). */
-export function isWeaponPickup(type: number): boolean { return type >= 72 && type <= 78; }
+export function isWeaponPickup(type: number): boolean { return (type >= 72 && type <= 78) || type === 141; }
 
 /** Means of death (DESIGN.md) → [obituary, suicide]. %o victim, %k killer. */
 const OBITS: Record<number, [string, string]> = {
@@ -76,6 +79,10 @@ const OBITS: Record<number, [string, string]> = {
   13: ["%o was splattered by %k's rocket.", '%o should have stood back.'],
   14: ['%o was knocked into next week by %k.', '%o punched himself out.'],
   15: ['%o fell too far.', '%o fell too far.'],
+  16: ['%o was caught outside the zone.', '%o was caught outside the zone.'],
+  17: ['%o was run over by %k.', '%o ran himself over.'],
+  18: ["%o caught %k's grenade.", '%o juggled a live grenade.'],
+  19: ["%o was picked off by %k's sniper rifle.", '%o shot himself.'],
 };
 
 export interface ObitParts { before: string; killer: string | null; after: string; victimFirst: boolean }

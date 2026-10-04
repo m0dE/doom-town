@@ -12,7 +12,7 @@
  */
 import type { Cmd } from '../sim/doomsim.js';
 
-export const BT_ATTACK = 1, BT_USE = 2, BT_JUMP = 4, BT_NEXT = 1 << 8, BT_PREV = 1 << 9;
+export const BT_ATTACK = 1, BT_USE = 2, BT_JUMP = 4, BT_ZOOM = 8, BT_NEXT = 1 << 8, BT_PREV = 1 << 9, BT_GRENADE = 1 << 10;
 const TWO_PI = Math.PI * 2;
 /** DESIGN.md: the sim clamps pitch to ±0.9 of straight up/down; so do we, so the view never fights it. */
 export const MAX_PITCH = (Math.PI / 2) * 0.9;
@@ -32,10 +32,12 @@ export interface InputHooks {
   onChat(): void;
   /** While dead: the respawn prompt wants a click to count as "fire". */
   keyboardCaptured(): boolean;
+  /** `M`: the large map (rooms with a minimap). */
+  onMap?(): void;
 }
 
 type Action = 'forward' | 'back' | 'left' | 'right' | 'turnleft' | 'turnright' | 'walk' | 'jump' | 'use' | 'attack'
-  | 'next' | 'prev' | 'w1' | 'w2' | 'w3' | 'w4' | 'w5' | 'w6' | 'w7' | 'scores' | 'chat' | 'menu';
+  | 'next' | 'prev' | 'w1' | 'w2' | 'w3' | 'w4' | 'w5' | 'w6' | 'w7' | 'scores' | 'chat' | 'menu' | 'zoom' | 'map' | 'grenade';
 
 const BINDS: Record<string, Action> = {
   KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right',
@@ -45,6 +47,7 @@ const BINDS: Record<string, Action> = {
   KeyQ: 'prev',
   Digit1: 'w1', Digit2: 'w2', Digit3: 'w3', Digit4: 'w4', Digit5: 'w5', Digit6: 'w6', Digit7: 'w7',
   Tab: 'scores', KeyT: 'chat', KeyY: 'chat', Enter: 'chat', Escape: 'menu',
+  KeyZ: 'zoom', KeyM: 'map', KeyG: 'grenade',
 };
 
 export class Input {
@@ -52,6 +55,14 @@ export class Input {
   yaw = 0;
   pitch = 0;
   settings: InputSettings = { sensitivity: 5, invertY: false };
+  /**
+   * Battle royale's buttons (DESIGN.md): when true, the right mouse button and Z hold
+   * the zoom button (bit 3) and G throws a grenade (bit 10). Elsewhere they do nothing
+   * and nothing zooms.
+   */
+  zoomAllowed = false;
+  /** Mouse look multiplier, < 1 while zoomed (the game sets it from the field of view). */
+  lookScale = 1;
 
   private held = new Set<Action>();
   /** Pressed since the last beat - sent once even if already released. */
@@ -69,6 +80,8 @@ export class Input {
     this.on(window, 'keydown', (e) => this.onKey(e as KeyboardEvent, true));
     this.on(window, 'keyup', (e) => this.onKey(e as KeyboardEvent, false));
     this.on(window, 'blur', () => this.releaseAll());
+    // the right button is the scope: no context menu over the game
+    this.on(target, 'contextmenu', (e) => e.preventDefault());
     this.on(document, 'pointerlockchange', () => {
       // Esc under pointer lock is eaten by the browser: losing the lock IS the menu key.
       if (!this.locked && this.enabled) { this.releaseAll(); this.hooks.onMenu(); }
@@ -98,6 +111,9 @@ export class Input {
   /** Held attack, for the status bar face's rampage grin. */
   get attacking(): boolean { return this.held.has('attack'); }
 
+  /** Zoom held (right mouse button or Z), in a room that has the scope. */
+  get zooming(): boolean { return this.zoomAllowed && this.enabled && this.held.has('zoom'); }
+
   /** Per rendered frame: keyboard turning. */
   update(dt: number): void {
     if (!this.enabled) return;
@@ -119,6 +135,8 @@ export class Input {
       if (has('attack')) buttons |= BT_ATTACK;
       if (has('use')) buttons |= BT_USE;
       if (has('jump')) buttons |= BT_JUMP;
+      if (this.zoomAllowed && has('zoom')) buttons |= BT_ZOOM;
+      if (this.zoomAllowed && has('grenade')) buttons |= BT_GRENADE;
       if (this.weapon) buttons |= (this.weapon & 15) << 4;
       if (this.cycle > 0) buttons |= BT_NEXT;
       else if (this.cycle < 0) buttons |= BT_PREV;
@@ -149,7 +167,7 @@ export class Input {
   private onMouseMove(e: MouseEvent): void {
     if (!this.locked || !this.enabled) return;
     // 0.022° per count at sensitivity 1, like the Quake family; Doom players run hot, default 5.
-    const k = (this.settings.sensitivity * 0.022 * Math.PI) / 180;
+    const k = (this.settings.sensitivity * 0.022 * Math.PI) / 180 * this.lookScale;
     this.yaw = wrap(this.yaw - e.movementX * k);
     const dy = e.movementY * k * (this.settings.invertY ? 1 : -1);
     this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + dy));
@@ -157,6 +175,7 @@ export class Input {
 
   private onButton(e: MouseEvent, down: boolean): void {
     if (!this.enabled) return;
+    if (e.button === 2) { if (this.locked) this.press('zoom', down); return; }
     if (e.button !== 0) return;
     if (!this.locked) {
       // The first click captures the mouse; it is not a shot.
@@ -184,6 +203,7 @@ export class Input {
       case 'scores': this.hooks.onScoreboard(down); return;
       case 'chat': if (down) { this.releaseAll(); this.hooks.onChat(); } return;
       case 'menu': if (down) this.hooks.onMenu(); return;
+      case 'map': if (down) this.hooks.onMap?.(); return;
       case 'next': if (down) this.cycle = 1; return;
       case 'prev': if (down) this.cycle = -1; return;
       case 'w1': case 'w2': case 'w3': case 'w4': case 'w5': case 'w6': case 'w7':

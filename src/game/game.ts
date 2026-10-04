@@ -19,15 +19,23 @@
  * replays it; everything else off confirmed frames, once each.
  */
 import { lockstep, type IdentitySession } from 'arrr-network';
-import { fetchMapArt, loadSim, loadWad, mapWad } from './assets.js';
+import { fetchMapArt, fetchModWad, loadSim, loadSimMaps, loadWad, mapWad } from './assets.js';
+import { readModInfo } from '../mods/modinfo.js';
+import { attachInfo } from '../mods/index.js';
+import { Wad as WadFile } from '../wad/index.js';
 import { createDoomApp, encodeCmd, type DoomApp, type DoomState } from '../sim/doomsim.js';
 import {
-  EVENT_WORDS, EV_MATCH_END, EV_MATCH_START, EV_OBITUARY, EV_PICKUP, EV_SOUND, EV_SWITCH,
+  EVENT_WORDS, EV_SPAWN, EV_MATCH_END, EV_MATCH_START, EV_OBITUARY, EV_PICKUP, EV_SOUND, EV_SWITCH,
   EV_MAP_CHANGE, EV_ROUND_START, EV_ROUND_END, EV_POINT_CAPTURED, EV_TICKETS_LOW, EV_BOSS_SPAWN, EV_BOSS_KILLED,
   MV, POINT_WORDS, PHASE_INTERMISSION, R_TEAM,
   MF_MISSILE, MOBJ_WORDS, M_ANGLE, M_FLAGS, M_ID, M_MOMX, M_MOMY, M_SPRITE, M_TYPE, M_X, M_Y, M_Z,
-  PV, ROW_WORDS, R_DEATHS, R_FRAGS, R_HUMAN, R_COLOR,
+  PV, ROW_WORDS, R_DEATHS, R_FRAGS, R_HUMAN, R_COLOR, R_MOBJ, R_STATE, PHASE_PLAY,
 } from '../sim/abi.js';
+import {
+  AIR_CHUTE, AIR_FREEFALL, AIR_SHIP, EV_CRATE, EV_SUPPLY, EV_ZONE, MODE_BR, MODE_WAR, MT_PARACHUTER, PHASE_DROP, PHASE_LOBBY,
+  DEFAULT_ZONE_STAGES, SNIPER_FOV, WP_SNIPER, ZOOM_FOV, clock, readZone, zoneLine,
+} from './br.js';
+import { pointState, type MinimapState } from '../hud/minimap.js';
 import { TICRATE } from '../sim/map.js';
 import { ROTATIONS, mapTitle } from '../sim/maps.js';
 import { cfgWords, roomGame, type CfgOverrides, type RoomGame } from '../menu/modes.js';
@@ -36,7 +44,7 @@ import { APP_ID, API_KEY } from '../menu/rooms.js';
 import { Input, MAX_PITCH } from '../input/input.js';
 import { TicRing } from './ring.js';
 import { Gfx } from '../hud/gfx.js';
-import { Hud, type ModeHud, type ScoreRow } from '../hud/hud.js';
+import { Hud, TEAM_CSS, type BrHud, type ModeHud, type ScoreRow } from '../hud/hud.js';
 import { FaceWidget, pointToAngle } from '../hud/face.js';
 import { obituaryTemplate, pickupMessage } from '../hud/strings.js';
 import { botColor, clampColor, PLAYER_COLORS } from './colors.js';
@@ -66,6 +74,8 @@ const OWN_TYPES = new Set([33, 34, 35]);
 const OWN_RADIUS = 64 * 65536;
 /** Snapshots: every 10 s of tics (DESIGN "Netcode numbers"). */
 const SNAPSHOT_EVERY = TICRATE * 10;
+/** The dropship's chase camera: map units behind the ship along the view, and above it. */
+const SHIP_CAM_BACK = 1250, SHIP_CAM_UP = 300, SHIP_CAM_TILT = 0.3;
 
 export interface GameOptions {
   room: string;
@@ -126,6 +136,12 @@ function indexOf(s: Snap): Map<number, number> {
 }
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+/** FNV-1a over a file: a mod's sim is cached per content, so an edited file of the same size is reloaded. */
+function fnv1a(bytes: Uint8Array): string {
+  let h = 2166136261;
+  for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 16777619);
+  return `${(h >>> 0).toString(16)}-${bytes.length}`;
+}
 /** Shortest-way interpolation of BAM angles, to radians. */
 function lerpAngle(a: number, b: number, t: number): number {
   const d = ((b - a) | 0);           // signed BAM difference
@@ -249,6 +265,22 @@ export class Game {
   private helloAt = 0;
   private pingAt = 0;
 
+  // war and battle royale
+  /** the room has a minimap (war, battle royale) */
+  private readonly hasMinimap: boolean;
+  /** the scope, 0..1 (eased toward the zoom button) */
+  private zoom = 0;
+  /** battle royale: the room's zone stage count (MODINFO `rules.zone`, clamped like the sim: 1..8; else 5) */
+  private get zoneStages(): number {
+    const z = this.game.mod?.info?.rules?.zone;
+    return Array.isArray(z) && z.length ? Math.min(8, z.length) : DEFAULT_ZONE_STAGES;
+  }
+  /** battle royale: where we finished this match (null: not placed yet) */
+  private brPlaced: number | null = null;
+  /** war: per point, whether the enemy was on our point last frame, and when we last said so */
+  private readonly attacked: boolean[] = [];
+  private readonly attackAlertAt: number[] = [];
+
   // hud
   private readonly face = new FaceWidget();
   private faceAcc = 0;
@@ -264,12 +296,35 @@ export class Game {
 
   static async start(opts: GameOptions, progress: (label: string, frac: number) => void): Promise<Game> {
     progress('Loading', 0.1);
-    const game = roomGame(opts.room);
-    const [wad, sim] = await Promise.all([loadWad(), loadSim(game.mode.rotation, (i, n) => progress(`Loading maps ${i}/${n}`, 0.1 + 0.5 * (i / n)))]);
+    const game: RoomGame = roomGame(opts.room);
+    const onMap = (i: number, n: number): void => progress(`Loading maps ${i}/${n}`, 0.1 + 0.5 * (i / n));
+    let simP;
+    if (game.mod) {
+      // a mod: one file with the map, its art and MODINFO (its rules go to the world config)
+      progress(`Loading ${game.mod.title}`, 0.1);
+      const bytes = await fetchModWad(game.mod.id);
+      if (bytes) {
+        try {
+          const info = readModInfo(new WadFile(bytes));
+          if (info && info.id === game.mod.id) {
+            attachInfo(info.id, info);
+            // MODINFO's ghosts / bosses now known: the room's game again, with them
+            Object.assign(game, roomGame(opts.room));
+          }
+        } catch (err) { console.warn(`[mods] ${game.mod.id}: ${err instanceof Error ? err.message : String(err)}`); }
+        // keyed by the mod, not the map: another mod may play the same map lump
+        simP = loadSimMaps(`mod:${game.mod.id}:${fnv1a(bytes)}`, game.rotation, onMap, (n) => (n === game.mod!.map ? bytes : null));
+      } else {
+        // not built as a mod file yet: the map's own paks (public/maps/<MAP>.map.wad)
+        console.warn(`[mods] mods/${game.mod.id}.wad not found; playing ${game.mod.map} from maps/`);
+        simP = loadSimMaps(`map:${game.mod.map}`, game.rotation, onMap);
+      }
+    } else simP = loadSim(game.mode.rotation, onMap);
+    const [wad, sim] = await Promise.all([loadWad(), simP]);
     progress('Connecting', 0.6);
     const mapIds = game.rotation.map((m) => sim.mapIds.get(m)!);
     const overrides = opts.offline ? opts.overrides : undefined;
-    const app = createDoomApp(sim, { slots: game.slots, cfg: (seed) => cfgWords(game, mapIds, seed, overrides) });
+    const app = createDoomApp(sim, { slots: game.slots, cfg: (seed) => cfgWords(game, mapIds, seed, overrides, sim.version >= 9) });
     const g = new Game(opts, wad, app, game);
     try {
       await g.net.start();
@@ -308,13 +363,17 @@ export class Game {
       changed: (np) => { this.input.settings = { sensitivity: np.sensitivity, invertY: np.invertY }; this.sound.setVolume(np.volume); this.view.setFov(np.fov); this.view.setPlayers?.(np.players); },
     });
 
+    this.hasMinimap = game.mode.key === 'war' || game.mode.key === 'br';
     this.input = new Input(this.view.canvas, {
       onMenu: () => this.openPause(),
       onScoreboard: (on) => this.hud.showScores(on),
       onChat: () => this.openChat(),
       keyboardCaptured: () => this.hud.chatting || this.pause.open,
+      onMap: () => { if (this.hasMinimap) this.hud.toggleMap(); },
     });
     this.input.settings = { sensitivity: p.sensitivity, invertY: p.invertY };
+    // the scope is battle royale's alone (DESIGN.md): elsewhere the zoom button is not sent
+    this.input.zoomAllowed = game.mode.key === 'br';
 
     this.frame = {
       tic: 0,
@@ -495,6 +554,11 @@ export class Game {
           this.hud.obituary(pieces, mine);
         }
         if (a === me) this.killer = b >= 0 && b !== a ? killer : null;
+        if (a === me && snap.match[MV.mode] === MODE_BR && snap.match[MV.phase] === PHASE_PLAY) {
+          // the players still alive after us finished ahead of us
+          const alive = readZone(snap.match)?.alive ?? this.aliveCount(snap);
+          this.brPlaced = Math.max(1, alive + 1);
+        }
         return;
       }
       case EV_PICKUP:
@@ -504,10 +568,14 @@ export class Game {
         }
         return;
       case EV_MATCH_START:
+        this.brPlaced = null;
         this.hud.message('A new match begins. Fight!', '#ffd25a');
         return;
       case EV_MATCH_END:
-        if (this.game.mode.teams) this.hud.banner(a === 0 ? 'RED TEAM WINS THE MATCH' : a === 1 ? 'BLUE TEAM WINS THE MATCH' : 'THE MATCH IS A DRAW', TEAM_TINT[a] ?? '#ffd25a', 5000);
+        if (snap.match[MV.mode] === MODE_BR) {
+          this.hud.banner(a >= 0 ? `${a === me ? 'YOU ARE' : `${this.slotName(a, snap).toUpperCase()} IS`} THE LAST MARINE STANDING` : 'NOBODY SURVIVED', '#ffd25a', 6000);
+          if (a === me) this.brPlaced = 1;
+        } else if (this.game.mode.teams) this.hud.banner(a === 0 ? 'RED TEAM WINS THE MATCH' : a === 1 ? 'BLUE TEAM WINS THE MATCH' : 'THE MATCH IS A DRAW', TEAM_TINT[a] ?? '#ffd25a', 5000);
         else if (a >= 0) this.hud.message(`${this.slotName(a, snap)} wins the match!`, '#ffd25a');
         return;
       case EV_MAP_CHANGE:
@@ -532,18 +600,66 @@ export class Game {
         this.hud.banner(b >= 0 ? `${this.slotName(b, snap).toUpperCase()} SLEW THE ${bossName(a).toUpperCase()}` : `THE ${bossName(a).toUpperCase()} IS DEAD`, '#ffd25a', 4000);
         this.hud.message('A BFG 9000 dropped where it fell!', '#7cff6b');
         return;
+      case EV_ZONE: {
+        // a = stage, b = 0 waiting / 1 shrinking, c = tics until that ends
+        const z = readZone(snap.match);
+        if (b === 1) {
+          this.hud.banner(a >= this.zoneStages ? 'THE FINAL CIRCLE IS CLOSING' : 'THE STORM IS CLOSING IN', '#d070ff', 3000);
+          if (z && z.dps > 0) this.hud.message(`In the storm: ${z.dps} damage a second`, '#d070ff');
+        } else if (b === 0) {
+          this.hud.message(`The storm moves in ${clock(c / TICRATE)}`, '#f4f0e8');
+        }
+        return;
+      }
+      case EV_SUPPLY:
+        this.hud.banner('SUPPLY DROP INCOMING', '#ff5a3a', 3500);
+        this.hud.message('A supply drop is coming down: it is marked on your map (M)', '#ff8a6a');
+        return;
+      case EV_CRATE:
+        // c = 1: a supply crate
+        if (a === me && me >= 0) this.hud.message(c === 1 ? `Supply crate opened: ${b} rare items!` : b > 0 ? `Crate smashed open: ${b} items spilled out!` : 'Crate smashed open!', '#ffd25a');
+        else if (c === 1 && a >= 0) this.hud.message(`${this.slotName(a, snap)} opened the supply drop`, '#ff8a6a');
+        return;
+      case EV_SPAWN:
+        // b = 2: a parachute landing
+        if (b === 2 && a === me && me >= 0) this.hud.message('Touchdown! Find a weapon - crates hold loot (E to open).', '#7cff6b');
+        return;
     }
   }
 
   /** The match as the HUD shows it: teams, rounds, tickets, capture points, the boss. */
-  private modeHud(snap: Snap): ModeHud {
+  private modeHud(snap: Snap, now: number, alive: boolean): ModeHud {
     const m = snap.match, g = this.game;
     const me = snap.mySlot;
+    const myTeam = me >= 0 ? snap.rows[me * ROW_WORDS + R_TEAM] : -1;
     const nPoints = Math.max(0, m[MV.points] | 0);
     const points: ModeHud['points'] = [];
+    const cam = this.frame.camera;
+    const isWar = m[MV.mode] === MODE_WAR, isBr = m[MV.mode] === MODE_BR;
+    const mapPoints: MinimapState['points'] = [];
+    let inPoint: ModeHud['inPoint'] = null;
     for (let i = 0; i < nPoints; i++) {
       const o = MV.points + 1 + i * POINT_WORDS;
-      points.push({ owner: m[o + 3], progress: m[o + 4] });
+      const p = { owner: m[o + 3], progress: m[o + 4], flags: m[o + 5] };
+      points.push(p);
+      if (!isWar) continue;
+      const x = m[o] * FRAC, y = m[o + 1] * FRAC, r = m[o + 2] * FRAC;
+      const st = pointState(p);
+      mapPoints.push({ x, y, r, owner: p.owner, progress: p.progress, blink: st.blink, blinkCss: st.attackerCss });
+      // standing in it
+      if (alive && myTeam >= 0 && !inPoint && Math.hypot(cam.x - x, cam.y - y) <= r) {
+        const ours = p.owner === myTeam;
+        const full = Math.abs(p.progress) >= 100;
+        inPoint = { index: i, progress: p.progress, state: st.contested ? 'CONTESTED' : ours ? (full ? 'SECURED' : 'DEFENDING') : 'CAPTURING' };
+      }
+      // the enemy stepping onto one of ours: say so, once per point per 10 s
+      const enemyIn = myTeam >= 0 && (p.flags & (myTeam === 0 ? 2 : 1)) !== 0;
+      const hit = p.owner === myTeam && enemyIn;
+      if (hit && !this.attacked[i] && now - (this.attackAlertAt[i] ?? -1e9) >= 10000) {
+        this.attackAlertAt[i] = now;
+        this.hud.message(`POINT ${String.fromCharCode(65 + i)} IS UNDER ATTACK`, '#ff8a3a');
+      }
+      this.attacked[i] = hit;
     }
     const bo = MV.points + 1 + nPoints * POINT_WORDS;
     const bossId = m.length > bo ? m[bo] : 0;
@@ -552,17 +668,69 @@ export class Game {
     const w = m[MV.winner];
     let winner: string | null = null;
     if (phase === PHASE_INTERMISSION && w >= 0) {
-      winner = g.mode.teams ? `${w === 0 ? 'RED' : 'BLUE'} TEAM WINS` : `${this.slotName(w, snap).toUpperCase()} WINS`;
+      winner = isBr ? `${this.slotName(w, snap).toUpperCase()} IS THE LAST MARINE STANDING`
+        : g.mode.teams ? `${w === 0 ? 'RED' : 'BLUE'} TEAM WINS` : `${this.slotName(w, snap).toUpperCase()} WINS`;
     }
     const spec = snap.me ? snap.me[PV_SPECTATING] : -1;
+
+    // battle royale
+    let br: BrHud | null = null;
+    const zone = isBr ? readZone(m) : null;
+    if (isBr) {
+      // a closed zone (radius 0) hurts everyone alive: everyone is outside it
+      const outside = alive && phase === PHASE_PLAY && !!zone && (zone.r <= 1 || Math.hypot(cam.x - zone.x, cam.y - zone.y) > zone.r);
+      const pvm = snap.me;
+      const v2 = !!pvm && pvm.length > PV.grenades;
+      const air = v2 ? pvm![PV.air] : 0;
+      let lobby: BrHud['lobby'] = null;
+      if (phase === PHASE_LOBBY) {
+        const players: NonNullable<BrHud['lobby']>['players'] = [];
+        for (let s2 = 0, n = snap.rows.length / ROW_WORDS; s2 < n; s2++) {
+          players.push({ name: this.slotName(s2, snap), color: this.slotColor(s2, snap), human: !!snap.ids[s2], me: s2 === me });
+        }
+        players.sort((x, y) => Number(y.me) - Number(x.me) || Number(y.human) - Number(x.human));
+        lobby = { secondsLeft: zone ? zone.lobbyLeft : Math.max(0, m[MV.phaseLeft]) / TICRATE, players };
+      }
+      br = {
+        alive: zone ? zone.alive : this.aliveCount(snap),
+        kills: me >= 0 ? snap.rows[me * ROW_WORDS + R_FRAGS] : 0,
+        zoneLine: phase === PHASE_PLAY && zone ? zoneLine(zone, this.zoneStages) : '',
+        outside, dps: zone?.dps ?? 0, placed: this.brPlaced,
+        grenades: v2 ? pvm![PV.grenades] : null,
+        lobby,
+        prompt: air === AIR_SHIP ? 'PRESS JUMP TO DROP' : air === AIR_FREEFALL ? 'PRESS JUMP TO OPEN THE CHUTE' : null,
+      };
+    }
+
+    // the minimap: teammates (never enemies; battle royale: nobody), us, the points, the zone
+    let minimap: MinimapState | null = null;
+    if (this.hasMinimap && (isWar || isBr)) {
+      const mates: number[] = [];
+      if (isWar && myTeam >= 0) {
+        const idx = indexOf(snap);
+        for (let s = 0, n = snap.rows.length / ROW_WORDS; s < n; s++) {
+          const ro = s * ROW_WORDS;
+          if (s === me || snap.rows[ro + R_TEAM] !== myTeam || snap.rows[ro + R_STATE] !== 0) continue;
+          const mi = idx.get(snap.rows[ro + R_MOBJ]);
+          if (mi !== undefined) mates.push(snap.mobjs[mi * MOBJ_WORDS + M_X] * FRAC, snap.mobjs[mi * MOBJ_WORDS + M_Y] * FRAC);
+        }
+      }
+      minimap = {
+        points: mapPoints, mates, mateCss: myTeam >= 0 ? TEAM_CSS[myTeam] : '#ffffff',
+        self: alive ? { x: cam.x, y: cam.y, angle: cam.yaw } : null,
+        zone: zone && phase !== PHASE_INTERMISSION && phase !== PHASE_LOBBY ? { x: zone.x, y: zone.y, r: zone.r, nx: zone.nx, ny: zone.ny, nr: zone.nr } : null,
+        ship: zone && phase === PHASE_DROP ? zone.ship : null,
+        supply: zone?.supply ?? null,
+      };
+    }
     return {
       mode: m[MV.mode], label: g.label, teams: g.mode.teams, phase,
       phaseLeft: Math.max(0, m[MV.phaseLeft]) / TICRATE,
       round: m[MV.round],
       score: [m[MV.scoreRed], m[MV.scoreBlue]],
       alive: [m[MV.aliveRed], m[MV.aliveBlue]],
-      myTeam: me >= 0 ? snap.rows[me * ROW_WORDS + R_TEAM] : -1,
-      points, boss, winner,
+      myTeam,
+      points, boss, winner, inPoint, br, minimap,
       mapTitle: mapTitle(this.app.sim.mapName(m[MV.map])),
       nextMapTitle: mapTitle(this.app.sim.mapName(m[MV.nextMap])),
       spectating: spec >= 0 && spec !== me ? this.slotName(spec, snap) : null,
@@ -610,6 +778,13 @@ export class Game {
     if (!id) return botPing(this.opts.room, slot, now);
     if (id === this.id) return Math.round(this.net.lockstep.roundTripMs ?? 0);
     return this.pings.get(id) ?? 0;
+  }
+
+  /** Players alive in a frame (PlayerRow state 0 with a body). */
+  private aliveCount(snap: Snap): number {
+    let n = 0;
+    for (let s = 0, k = snap.rows.length / ROW_WORDS; s < k; s++) if (snap.rows[s * ROW_WORDS + R_STATE] === 0 && snap.rows[s * ROW_WORDS + R_MOBJ] > 0) n++;
+    return n;
   }
 
   // ------------------------------------------------------------------ the frame
@@ -662,12 +837,25 @@ export class Game {
     // --- camera
     const cam = f.camera;
     const dead = !!pv && pv[PV.state] !== 0;
+    let airborne = false;
     if (pv && pvB) {
       const jump = Math.abs(pvB[PV.x] - pv[PV.x]) > TELEPORT || Math.abs(pvB[PV.y] - pv[PV.y]) > TELEPORT || Math.abs(pvB[PV.viewz] - pv[PV.viewz]) > TELEPORT;
       const k = jump ? (pvFrac < 0.5 ? 0 : 1) : pvFrac;
-      cam.x = lerp(pv[PV.x], pvB[PV.x], k) * FRAC;
-      cam.y = lerp(pv[PV.y], pvB[PV.y], k) * FRAC;
-      cam.z = lerp(pv[PV.viewz], pvB[PV.viewz], k) * FRAC;
+      // battle royale v2: in the ship, falling or under the chute there is no body; the
+      // camera rides the sim's virtual position
+      const air = pv.length > PV.air ? pv[PV.air] : 0, airB = pvB.length > PV.air ? pvB[PV.air] : 0;
+      airborne = air >= AIR_SHIP && air <= AIR_CHUTE;
+      if (airborne) {
+        const kk = airB === air ? k : 1;
+        const B = airB >= AIR_SHIP && airB <= AIR_CHUTE ? pvB : pv;
+        cam.x = lerp(pv[PV.airX], B[PV.airX], kk) * FRAC;
+        cam.y = lerp(pv[PV.airY], B[PV.airY], kk) * FRAC;
+        cam.z = lerp(pv[PV.airZ], B[PV.airZ], kk) * FRAC;
+      } else {
+        cam.x = lerp(pv[PV.x], pvB[PV.x], k) * FRAC;
+        cam.y = lerp(pv[PV.y], pvB[PV.y], k) * FRAC;
+        cam.z = lerp(pv[PV.viewz], pvB[PV.viewz], k) * FRAC;
+      }
       if (dead) {
         cam.yaw = lerpAngle(pv[PV.angle], pvB[PV.angle], k);
         cam.pitch = 0;
@@ -675,9 +863,23 @@ export class Game {
         cam.yaw = (this.input.yaw + (this.yawOffset >>> 0) * BAM) % (2 * Math.PI);
         cam.pitch = this.input.pitch;
       }
+      // in the dropship: a chase camera behind and above it, looking where the mouse looks,
+      // rather than an eye inside the hull
+      if (airborne && (pv[PV.air] === AIR_SHIP)) {
+        // tilted down a little so the ship sits in the lower middle with the town below it
+        cam.pitch = Math.max(-1.45, cam.pitch - SHIP_CAM_TILT);
+        const cp = Math.cos(cam.pitch);
+        cam.x -= Math.cos(cam.yaw) * cp * SHIP_CAM_BACK;
+        cam.y -= Math.sin(cam.yaw) * cp * SHIP_CAM_BACK;
+        cam.z += SHIP_CAM_UP - Math.sin(cam.pitch) * SHIP_CAM_BACK;
+      }
       if (this.wasDead && !dead) this.input.pitch = 0;   // a respawn looks straight ahead
       this.wasDead = dead;
       f.viewMobjId = pv[PV.mobj];
+      // dead and spectating (elimination, battle royale): look through the eyes of the
+      // player we watch, from the confirmed frames everyone else is drawn from
+      const spec = dead ? pv[PV.spectating] : -1;
+      if (spec >= 0 && spec !== b.mySlot) this.followSpectated(spec, a, b, frac);
       const ps = (word: number, sxw: number): { sprite: number; frame: number; sx: number; sy: number } | null => {
         const s = (k < 0.5 ? pv! : pvB!)[word];
         if (s === -1) return null;
@@ -687,13 +889,25 @@ export class Game {
       f.player = {
         damagecount: cur[PV.damagecount], bonuscount: cur[PV.bonuscount], extralight: cur[PV.extralight], fixedcolormap: cur[PV.fixedcolormap],
         powers: cur.subarray(PV.powers, PV.powers + 6),
-        weapon: dead ? null : ps(PV.psWeapon, PV.psWeaponSx),
-        flash: dead ? null : ps(PV.psFlash, PV.psFlashSx),
+        weapon: dead || airborne ? null : ps(PV.psWeapon, PV.psWeaponSx),
+        flash: dead || airborne ? null : ps(PV.psFlash, PV.psFlashSx),
       };
     } else {
       f.player = null;
       f.viewMobjId = 0;
     }
+
+    // --- the scope (battle royale): the field of view eases to ZOOM_FOV while zoom is held
+    const wantZoom = this.input.zooming && !!pv && !dead && !airborne && b.match[MV.phase] !== PHASE_INTERMISSION ? 1 : 0;
+    this.zoom += (wantZoom - this.zoom) * (1 - Math.exp(-dt * 14));
+    if (Math.abs(this.zoom - wantZoom) < 0.002) this.zoom = wantZoom;
+    const baseFov = prefs().fov;
+    // the sniper rifle zooms further (DESIGN.md "Sniper rifle")
+    const fov = lerp(baseFov, pv && pv[PV.ready] === WP_SNIPER ? SNIPER_FOV : ZOOM_FOV, this.zoom);
+    this.view.setZoomFov(this.zoom > 0 ? fov : null);
+    this.input.lookScale = this.zoom > 0 ? Math.tan((fov * Math.PI) / 360) / Math.tan((baseFov * Math.PI) / 360) : 1;
+    // looking through the scope: no gun in front of it
+    if (this.zoom > 0.6 && f.player) { f.player.weapon = null; f.player.flash = null; }
 
     // --- everyone else, confirmed at `others`. Our own projectiles come from the
     // prediction instead (at `self`, like the camera), so a rocket leaves the barrel on
@@ -705,6 +919,13 @@ export class Game {
     if (own) count = this.addMobjs({ mobjs: own.a } as Snap, { mobjs: own.b } as Snap, own.frac, null, count);
     if (this.staged.length && pv) count = this.addStaged(count, cam, pv[PV.z] * FRAC);
     f.mobjCount = count;
+    // our own parachuter (the airborne stand-in of our body) is not drawn from inside it
+    if (airborne && this.mySlot >= 0) {
+      for (let i = 0; i < count; i++) {
+        const mo = this.mobjPool[i];
+        if (mo.type === MT_PARACHUTER && mo.slot === this.mySlot) { f.viewMobjId = mo.id; break; }
+      }
+    }
 
 
     // --- sectors (doors and lifts move between tics too)
@@ -724,6 +945,9 @@ export class Game {
     // --- events since the last frame
     f.events = this.pending.splice(0);
     f.eventCount = (f.events as RenderEvent[]).length;
+    // battle royale: the storm wall and the purple tint outside it (src/render/br), from the end of the drop to the intermission
+    const zr = b.match[MV.mode] === MODE_BR && b.match[MV.phase] !== PHASE_LOBBY && b.match[MV.phase] !== PHASE_DROP && b.match[MV.phase] !== PHASE_INTERMISSION ? readZone(b.match) : null;
+    f.royale = zr ? { x: zr.x, y: zr.y, r: zr.r, nx: zr.nx, ny: zr.ny, nr: zr.nr } : null;
 
     this.sound.frame(cam.x, cam.y, cam.yaw, this.mobjPool, count);
     this.view.hudHeight(prefs().hud === 'bar' && f.player ? this.hud.barHeight : 0);
@@ -735,6 +959,25 @@ export class Game {
 
     // --- HUD
     this.updateHud(now, dt, pv, b, dead);
+  }
+
+  /** The camera at a watched player's eyes (its body is then not drawn). */
+  private followSpectated(slot: number, a: Snap, b: Snap, frac: number): void {
+    const id = b.rows[slot * ROW_WORDS + R_MOBJ];
+    const jb = id > 0 ? indexOf(b).get(id) : undefined;
+    if (jb === undefined) return;
+    const ja = indexOf(a).get(id);
+    const B = b.mobjs, ob = jb * MOBJ_WORDS;
+    const A = ja === undefined ? B : a.mobjs, oa = ja === undefined ? ob : ja * MOBJ_WORDS;
+    const jump = Math.abs(B[ob + M_X] - A[oa + M_X]) > TELEPORT || Math.abs(B[ob + M_Y] - A[oa + M_Y]) > TELEPORT;
+    const k = jump ? 1 : frac;
+    const cam = this.frame.camera;
+    cam.x = lerp(A[oa + M_X], B[ob + M_X], k) * FRAC;
+    cam.y = lerp(A[oa + M_Y], B[ob + M_Y], k) * FRAC;
+    cam.z = lerp(A[oa + M_Z], B[ob + M_Z], k) * FRAC + 41;
+    cam.yaw = lerpAngle(A[oa + M_ANGLE], B[ob + M_ANGLE], k);
+    cam.pitch = 0;
+    this.frame.viewMobjId = id;
   }
 
   /** Interpolated RenderMobjs from a pair of frames into the pool from `count`; `skip` ids are left out. */
@@ -822,6 +1065,9 @@ export class Game {
     const timeLeft = Math.max(0, snap.match[MV.phaseLeft]) / TICRATE;
     if (!this.net.offline) this.reportIndie(me >= 0 ? rows[me * ROW_WORDS + R_FRAGS] : 0, inter);
     const st = this.net.statusText;
+    const mode = this.modeHud(snap, now, !!pv && !dead && !inter);
+    // the storm's roar while we stand in it
+    this.sound.setStorm?.(mode.br?.outside ? 1 : 0);
     this.hud.update({
       pv, face: this.face.index, color: this.colors.get(this.id) ?? 0,
       frags: me >= 0 ? rows[me * ROW_WORDS + R_FRAGS] : 0, rank, total: rows.length / ROW_WORDS,
@@ -830,7 +1076,8 @@ export class Game {
       locked: this.input.locked || this.pause.open,
       style: prefs().hud,
       net: st === 'Connected' || st === 'Offline' ? null : st,
-      mode: this.modeHud(snap),
+      mode,
+      zoom: this.zoom,
     }, now);
     if (!dead) this.killer = null;
     void R_HUMAN;
@@ -917,10 +1164,14 @@ export class Game {
     if (want && want !== this.view.map && this.mapLoading !== want) {
       const id = snap.match[MV.map];
       this.mapLoading = want;
-      void mapWad(want, this.game.bosses).then((w) => {
+      const modWad = this.game.mod && want === this.game.mod.map ? this.game.mod.id : undefined;
+      void mapWad(want, this.game.bosses, modWad).then((w) => {
         if (this.disposed || this.mapLoading !== want) return;
         this.view.setMap(want, w, sim.nameTables(id));
         this.mapLoading = '';
+        if (this.hasMinimap) {
+          try { this.hud.setMinimap(parseMap(want, w.mapLumps(want))); } catch (err) { console.warn('[minimap]', err); this.hud.setMinimap(null); }
+        }
       }).catch((err) => { console.error(err); this.mapLoading = ''; });
     }
     // the next map's art, while this one is played
@@ -974,6 +1225,7 @@ export class Game {
       ammo: pv ? Array.from(pv.subarray(PV.ammo, PV.ammo + 4)) : null,
       angle: pv ? ((pv[PV.angle] >>> 0) * BAM) : null,
       render: this.view.stats?.() ?? null,
+      zoom: this.zoom,
     };
   }
 

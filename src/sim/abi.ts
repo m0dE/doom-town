@@ -18,7 +18,7 @@ export interface DoomSimExports {
   world_new(map: number, seed: number, slots: number): number;
   /** v2: cfg = u32 words (src/menu/modes.ts cfgWords) */
   world_new_cfg(ptr: number, len: number): number;
-  /** v2: 13 words, 6 per capture point, 5 boss words (MATCH_* below) */
+  /** v2: 13 words, 6 per capture point, 5 boss words, BR_WORDS battle royale words (MV, BR below) */
   world_view_match(h: number): number;
   world_free(h: number): void;
   world_clone(h: number): number;
@@ -60,8 +60,12 @@ export const PV = {
   psWeapon: 36, psWeaponSx: 37, psWeaponSy: 38, psFlash: 39, psFlashSx: 40, psFlashSy: 41,
   isHuman: 42, respawnReady: 43, matchTic: 44, matchPhase: 45, onground: 46, refire: 47,
   team: 48, respawnMask: 49, spectating: 50,
+  /** battle royale v2 (sim_version 9): 0 none, 1 in the ship, 2 freefall, 3 parachute, 4 driving */
+  air: 51, airX: 52, airY: 53, airZ: 54, vehicle: 55, grenades: 56,
 } as const;
-export const PLAYER_WORDS = 51;
+/** 57 since sim_version 9 (51 before) */
+export const PLAYER_WORDS = 57;
+export const AIR_NONE = 0, AIR_SHIP = 1, AIR_FREEFALL = 2, AIR_CHUTE = 3, AIR_VEHICLE = 4;
 
 /** PlayerRow: 9 i32 per slot (v2 added team). */
 export const ROW_WORDS = 9;
@@ -81,8 +85,42 @@ export const MV = {
 export const POINT_WORDS = 6;
 /** after the points: boss mobj id, boss type, health, max health, tics to the next boss (-1 none) */
 export const BOSS_WORDS = 5;
+/**
+ * After the boss words, always present (zeros outside battle royale): the zone and the
+ * alive count. x/y/radius are fixed point; the current radius is interpolated while
+ * shrinking. stage 1..n, n+1 = closed (6 with the default 5 stages); state 0 waiting,
+ * 1 shrinking, 2 closed. sim_version 9 adds 11..18: lobby/drop tics left, the ship's
+ * x, y and direction (fixed unit vector) during the drop, the supply drop's x, y and
+ * state (0 none, 1 incoming, 2 landed). 11 words before sim_version 9.
+ */
+export const BR_WORDS = 19;
+export const BR = {
+  zoneX: 0, zoneY: 1, zoneR: 2, nextX: 3, nextY: 4, nextR: 5,
+  stage: 6, state: 7, stateLeft: 8, alive: 9, damage: 10,
+  phaseLeft: 11, shipX: 12, shipY: 13, shipDirX: 14, shipDirY: 15, supplyX: 16, supplyY: 17, supplyState: 18,
+} as const;
+export const ZONE_WAITING = 0, ZONE_SHRINKING = 1, ZONE_CLOSED = 2;
+/** battle royale events: 16 zone (a stage, b state, c tics until it ends, x/y centre),
+ * 17 crate opened (a opener slot or -1, b things spilled, c 1 = supply crate, x/y/z crate
+ * centre), 18 supply drop incoming (a stage, b tics until it lands, x/y). Event 5 spawn
+ * has b = 2 for a parachute landing. */
+export const EV_ZONE = 16, EV_CRATE = 17, EV_SUPPLY = 18;
+/** means of death: 16 caught outside the zone, 17 run over, 18 grenade, 19 sniper rifle */
+export const MOD_ZONE = 16, MOD_ROADKILL = 17, MOD_GRENADE = 18, MOD_SNIPER = 19;
+/** pickup message ids added by battle royale v2 */
+export const MSG_SNIPER = 32, MSG_GRENADES = 33;
+/** mobjtypes (things 9020 crate, 9040 buggy, 9050 sniper, 9051 grenade pack; 9030 = lobby spot) */
+export const MT_CRATE = 137, MT_DROPSHIP = 138, MT_PARACHUTER = 139, MT_BUGGY = 140, MT_SNIPER = 141, MT_GRENADE = 142, MT_GRENADEPACK = 143;
+/** weapontype of the sniper rifle (key 2 toggles pistol / sniper) */
+export const WP_SNIPER = 9;
+/** MobjView flags: a supply-drop crate */
+export const MF_SUPPLY = 0x20000000;
+/** ticcmd buttons */
+export const BT_ATTACK = 1, BT_USE = 2, BT_JUMP = 4, BT_ZOOM = 8, BT_GRENADE = 1 << 10;
+/** game modes (world_view_match word 0) */
+export const MODE_FFA = 0, MODE_TDM = 1, MODE_ELIM = 2, MODE_WAR = 3, MODE_BR = 4;
 /** match phases */
-export const PHASE_PLAY = 0, PHASE_FREEZE = 1, PHASE_ROUND_OVER = 2, PHASE_INTERMISSION = 3;
+export const PHASE_PLAY = 0, PHASE_FREEZE = 1, PHASE_ROUND_OVER = 2, PHASE_INTERMISSION = 3, PHASE_LOBBY = 4, PHASE_DROP = 5;
 
 /** Doom mobj flags the shell reads. */
 export const MF_SHOOTABLE = 0x4, MF_MISSILE = 0x10000, MF_SHADOW = 0x40000, MF_CORPSE = 0x100000;

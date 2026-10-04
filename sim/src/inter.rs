@@ -69,12 +69,29 @@ impl World {
             let p = &mut self.players[slot];
             p.bonuscount += BONUSADD;
             p.weaponowned[weapon as usize] = true;
-            self.give_ammo(slot, ammo, 5);
+            self.give_ammo(slot, ammo, if weapon == WP_SNIPER { 1 } else { 5 });
             self.players[slot].pendingweapon = weapon;
             self.sc.stay_gave = true;
             return false;
         }
         let gaveammo = if ammo != AM_NOAMMO { self.give_ammo(slot, ammo, 1) } else { false };
+        let p = &mut self.players[slot];
+        let gaveweapon = if p.weaponowned[weapon as usize] {
+            false
+        } else {
+            p.weaponowned[weapon as usize] = true;
+            p.pendingweapon = weapon;
+            true
+        };
+        gaveweapon || gaveammo
+    }
+
+    /// battle royale weapon pickup: the weapon if not owned, plus two clips of its ammo
+    fn give_weapon_br(&mut self, slot: usize, weapon: i32) -> bool {
+        let ammo = WEAPONINFO[weapon as usize].ammo;
+        // the sniper rifle comes with 10 bullets
+        let clips = if weapon == WP_SNIPER { 1 } else { 2 };
+        let gaveammo = if ammo != AM_NOAMMO { self.give_ammo(slot, ammo, clips) } else { false };
         let p = &mut self.players[slot];
         let gaveweapon = if p.weaponowned[weapon as usize] {
             false
@@ -364,6 +381,17 @@ impl World {
             spr::SGN2 => {
                 return self.weapon_stay_pickup(slot, WP_SUPERSHOTGUN, special, dropped, msg::GOTSHOTGUN2);
             }
+            spr::SNPR => {
+                return self.weapon_stay_pickup(slot, WP_SNIPER, special, dropped, msg::GOTSNIPER);
+            }
+            spr::GREN => {
+                let p = &mut self.players[slot];
+                if p.grenades >= crate::vehicle::GRENADE_MAX {
+                    return;
+                }
+                p.grenades = (p.grenades + 2).min(crate::vehicle::GRENADE_MAX);
+                message = msg::GOTGRENADES;
+            }
             _ => return,
         }
         self.players[slot].items += 1;
@@ -379,7 +407,14 @@ impl World {
             let m = self.mo(special);
             (m.type_, m.x, m.y, m.z)
         };
-        if dropped {
+        if self.is_br() {
+            // battle royale: weapons don't stay; weapon + 2 clips (vanilla's single-player amount)
+            if !self.give_weapon_br(slot, weapon) {
+                return;
+            }
+            self.remove_mobj(special);
+            self.players[slot].bonuscount += BONUSADD;
+        } else if dropped {
             if !self.give_weapon(slot, weapon, true) {
                 return;
             }
@@ -407,6 +442,10 @@ impl World {
             m.height >>= 2;
         }
         let tplayer = self.player_of(target);
+        if let Some(tp) = tplayer {
+            // a driver dies out of the buggy
+            self.leave_vehicle(tp, true);
+        }
         let splayer = if source != NONE && self.alive(source) { self.player_of(source) } else { None };
         if let Some(tp) = tplayer {
             // scoring: kills of others count +1, suicides and world deaths -1 (vanilla frags[])
@@ -415,6 +454,8 @@ impl World {
             match splayer {
                 Some(sp) if sp != tp => self.players[sp].frags += 1,
                 _ if monster != 0 => {}
+                // battle royale: frags are kills, nothing is taken away
+                _ if self.is_br() => {}
                 _ => self.players[tp].frags -= 1,
             }
             self.players[tp].deaths += 1;
@@ -467,6 +508,22 @@ impl World {
             return;
         }
         if thealth <= 0 {
+            return;
+        }
+        if self.is_br() && self.g.phase == crate::game::PH_LOBBY {
+            // nothing takes damage in the lobby (players, crates, buggies)
+            return;
+        }
+        if mod_ != crate::royale::MOD_ZONE {
+            // shots at a driver hit the buggy
+            if let Some(b) = self.player_of(target).and_then(|p| self.driving(p)) {
+                return self.damage_mobj(b, inflictor, source, damage, mod_);
+            }
+        }
+        if self.mo(target).type_ as usize == mt::CRATE {
+            // any damage breaks a crate open
+            let opener = if source != NONE && self.alive(source) { self.player_of(source).map(|s| s as i32).unwrap_or(-1) } else { -1 };
+            self.open_crate(target, opener);
             return;
         }
         if tflags & MF_SKULLFLY != 0 {
@@ -522,7 +579,8 @@ impl World {
                 return;
             }
             let pl = &mut self.players[p];
-            if pl.armortype != 0 {
+            // the zone ignores armor
+            if pl.armortype != 0 && mod_ != crate::royale::MOD_ZONE {
                 let mut saved = if pl.armortype == 1 { damage / 3 } else { damage / 2 };
                 if pl.armorpoints <= saved {
                     saved = pl.armorpoints;
@@ -554,6 +612,10 @@ impl World {
         let m = self.mo_mut(target);
         m.health -= damage;
         if m.health <= 0 {
+            if self.mo(target).type_ as usize == mt::BUGGY {
+                self.buggy_explode(target, source);
+                return;
+            }
             self.kill_mobj(source, target, mod_);
             return;
         }

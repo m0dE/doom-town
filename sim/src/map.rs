@@ -150,6 +150,8 @@ pub struct Map {
     pub cap_points: Vec<(Fixed, Fixed, Fixed)>,
     /// per capture point: spawn spot indices to respawn at, nearest first
     pub point_spots: Vec<Vec<u16>>,
+    /// battle royale lobby island: things 9030
+    pub lobby_spots: Vec<MapThing>,
 }
 
 pub fn fnv1a(bytes: &[u8], mut h: u32) -> u32 {
@@ -182,6 +184,9 @@ pub struct Lump<'a> {
     pub name: String,
     pub data: &'a [u8],
 }
+
+/// thing type of a battle royale lobby spot
+pub const LOBBY_THING: i16 = 9030;
 
 pub fn wad_lumps(wad: &[u8]) -> Result<Vec<Lump<'_>>, i32> {
     if wad.len() < 12 {
@@ -268,7 +273,13 @@ impl Map {
         // find the map marker: the lump right before THINGS
         let ti = lumps.iter().position(|l| l.name == "THINGS").ok_or(-3)?;
         let name = if ti > 0 { lumps[ti - 1].name.clone() } else { String::from("MAP") };
-        let end = (ti + 10).min(lumps.len());
+        // the map's lumps run until the first lump that isn't one (a mod PWAD carries
+        // MODINFO, TEXTURE1, PNAMES, P_/F_ namespaces besides its one map)
+        const MAP_LUMPS: [&str; 11] = ["THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES", "SECTORS", "REJECT", "BLOCKMAP", "BEHAVIOR"];
+        let mut end = ti;
+        while end < lumps.len() && end < ti + 11 && MAP_LUMPS.contains(&lumps[end].name.as_str()) {
+            end += 1;
+        }
         let find = |n: &str| -> Result<&[u8], i32> {
             for l in &lumps[ti..end] {
                 if l.name == n {
@@ -584,7 +595,9 @@ impl Map {
             explicit_teams: false,
             cap_points: Vec::new(),
             point_spots: Vec::new(),
+            lobby_spots: Vec::new(),
         };
+        map.lobby_spots = map.things.iter().filter(|t| t.type_ == LOBBY_THING).copied().collect();
         map.nav = crate::bots::nav::Nav::build(&map);
         map.spawn_spots = crate::spots::build_spawn_spots(&map);
         map.num_dm_starts = map.things.iter().filter(|t| t.type_ == 11).count();

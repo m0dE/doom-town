@@ -94,6 +94,59 @@ for b in blocks:
     assert len(vals) == 23, vals
     infos.append([ev(v) for v in vals])
 
+# Additions beyond vanilla, appended after its tables so every vanilla index stays put
+# (DESIGN.md "Battle royale" and "Battle royale v2"). Crates, the dropship, parachuters
+# and buggies borrow existing sprites (BAR1A / PLAYA-B) as fallbacks: the client draws
+# them as 3D models. SNPR/SNPG/SNPF/GREN are new sprite names whose patches the client
+# generates.
+EXTRA_SPRITES = ['SNPR', 'SNPG', 'SNPF', 'GREN']
+for n in EXTRA_SPRITES:
+    sym['SPR_' + n] = len(sprites)
+    sprites.append('SPR_' + n)
+    sprnames.append(n)
+EXTRA_STATES = [
+    ('S_CRATE', ('SPR_BAR1', '0', '-1', 'None', 'S_CRATE', '0', '0')),             # 967
+    ('S_DROPSHIP', ('SPR_BAR1', '0', '-1', 'None', 'S_DROPSHIP', '0', '0')),       # 968
+    ('S_PARA_FALL', ('SPR_PLAY', '0', '-1', 'None', 'S_PARA_FALL', '0', '0')),     # 969 frame A freefall
+    ('S_PARA_OPEN', ('SPR_PLAY', '1', '-1', 'None', 'S_PARA_OPEN', '0', '0')),     # 970 frame B chute open
+    ('S_BUGGY', ('SPR_BAR1', '0', '-1', 'None', 'S_BUGGY', '0', '0')),             # 971
+    ('S_SNIPERRIFLE', ('SPR_SNPR', '0', '-1', 'None', 'S_SNIPERRIFLE', '0', '0')), # 972 pickup
+    ('S_GRENADE', ('SPR_GREN', '0', '-1', 'None', 'S_GRENADE', '0', '0')),         # 973 in flight
+    ('S_GRENADEPACK', ('SPR_GREN', '0', '-1', 'None', 'S_GRENADEPACK', '0', '0')), # 974 pickup
+    ('S_SNIPER', ('SPR_SNPG', '0', '1', 'WeaponReady', 'S_SNIPER', '0', '0')),     # 975
+    ('S_SNIPERDOWN', ('SPR_SNPG', '0', '1', 'Lower', 'S_SNIPERDOWN', '0', '0')),   # 976
+    ('S_SNIPERUP', ('SPR_SNPG', '0', '1', 'Raise', 'S_SNIPERUP', '0', '0')),       # 977
+    ('S_SNIPER1', ('SPR_SNPG', '1', '4', 'FireSniper', 'S_SNIPER2', '0', '0')),    # 978 fire
+    ('S_SNIPER2', ('SPR_SNPG', '2', '23', 'None', 'S_SNIPER3', '0', '0')),         # 979 bolt
+    ('S_SNIPER3', ('SPR_SNPG', '3', '23', 'None', 'S_SNIPER4', '0', '0')),         # 980 bolt
+    ('S_SNIPER4', ('SPR_SNPG', '0', '5', 'ReFire', 'S_SNIPER', '0', '0')),         # 981 (held: a shot every 4+23+23 = 50 tics)
+    ('S_SNIPERFLASH', ('SPR_SNPF', '32768', '4', 'Light1', 'S_LIGHTDONE', '0', '0')), # 982
+]
+def mobj(doomednum, state, health, radius, height, mass, flags):
+    return [doomednum, state, health, 'S_NULL', 'sfx_None', '8', 'sfx_None', 'S_NULL', '0', 'sfx_None',
+            'S_NULL', 'S_NULL', 'S_NULL', 'S_NULL', 'sfx_None', '0', radius, height, mass,
+            '0', 'sfx_None', flags, 'S_NULL']
+EXTRA_MOBJS = [
+    ('MT_CRATE', mobj('9020', 'S_CRATE', '25', '20*FRACUNIT', '40*FRACUNIT', '100', 'MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD')),      # 137
+    ('MT_DROPSHIP', mobj('-1', 'S_DROPSHIP', '1000', '64*FRACUNIT', '64*FRACUNIT', '100', 'MF_NOBLOCKMAP|MF_NOGRAVITY|MF_NOCLIP')),  # 138
+    ('MT_PARACHUTER', mobj('-1', 'S_PARA_FALL', '1000', '16*FRACUNIT', '56*FRACUNIT', '100', 'MF_NOBLOCKMAP|MF_NOGRAVITY|MF_NOCLIP')),  # 139
+    ('MT_BUGGY', mobj('9040', 'S_BUGGY', '400', '32*FRACUNIT', '48*FRACUNIT', '1000', 'MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD')),   # 140
+    ('MT_SNIPERRIFLE', mobj('9050', 'S_SNIPERRIFLE', '1000', '20*FRACUNIT', '16*FRACUNIT', '100', 'MF_SPECIAL')),            # 141
+    ('MT_GRENADE', mobj('-1', 'S_GRENADE', '1000', '4*FRACUNIT', '8*FRACUNIT', '100', 'MF_NOBLOCKMAP|MF_DROPOFF')),          # 142
+    ('MT_GRENADEPACK', mobj('9051', 'S_GRENADEPACK', '1000', '20*FRACUNIT', '16*FRACUNIT', '100', 'MF_SPECIAL')),            # 143
+]
+for n, _ in EXTRA_STATES:
+    sym[n] = len(statesn)
+    statesn.append(n)
+for n, r in EXTRA_STATES:
+    if r[3] != 'None' and r[3] not in actions:
+        actions.append(r[3])
+    states.append((sym[r[0]], ev(r[1]), ev(r[2]), r[3], sym[r[4]], ev(r[5]), ev(r[6])))
+for n, vals in EXTRA_MOBJS:
+    sym[n] = len(mts)
+    mts.append(n)
+    infos.append([ev(v) for v in vals])
+
 # sounds
 m = re.search(r'sfxinfo_t S_sfx\[\]\s*=\s*\{(.*?)\};', sounds_c, re.S)
 sfx = re.findall(r"\{\s*\"(\w+)\"\s*,\s*(\w+)\s*,\s*(-?\d+)\s*,", m.group(1))

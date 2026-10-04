@@ -6,7 +6,8 @@
 
 .h-msgs { position: absolute; left: calc(var(--k) * 4px); top: calc(var(--k) * 3px); display: flex; flex-direction: column; gap: calc(var(--k) * 1px); }
 .h-feed { position: absolute; right: calc(var(--k) * 4px); top: calc(var(--k) * 16px); display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--k) * 2px); max-width: 44vw; }
-.h-feed > div { max-width: 44vw; overflow: hidden; white-space: nowrap; }
+.h-feed > div { max-width: calc(100vw - var(--k) * 8px); white-space: nowrap; align-items: center; }
+.h-feed canvas { flex: none; }
 .h-feed > div, .h-msgs > div { transition: opacity .4s; }
 .h-feed > div.old, .h-msgs > div.old { opacity: 0; }
 .h-top { position: absolute; right: calc(var(--k) * 4px); top: calc(var(--k) * 3px); display: flex; align-items: center; gap: calc(var(--k) * 6px); }
@@ -33,7 +34,7 @@
 .h-scores .row .r { justify-self: end; }
 .h-scores .name { display: flex; align-items: center; gap: calc(var(--k) * 3px); min-width: 0; overflow: hidden; }
 .h-scores .sw { width: calc(var(--k) * 5px); height: calc(var(--k) * 5px); border-radius: 1px; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
-.h-scores .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: calc(var(--k) * 4px); }
+.h-scores .title { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: calc(var(--k) * 2px) calc(var(--k) * 8px); margin-bottom: calc(var(--k) * 4px); }
 
 .h-chat { position: absolute; left: calc(var(--k) * 4px); bottom: calc(var(--k) * 40px); display: flex; align-items: center; gap: 6px; pointer-events: auto; }
 .h-chat input { width: min(60vw, 520px); padding: 6px 10px; font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.7);
@@ -42,15 +43,33 @@
   background: rgba(120, 10, 4, .85); color: #fff; font-weight: 600; letter-spacing: .04em; }
 
 /* modes: capture points, boss bar, banner */
-.h-points { position: absolute; left: 50%; top: calc(var(--k) * 16px); transform: translateX(-50%); display: flex; gap: calc(var(--k) * 3px); }
+.h-points { position: absolute; left: 50%; top: calc(var(--k) * 16px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(var(--k) * 2px); }
+.h-points .pts { display: flex; gap: calc(var(--k) * 3px); }
 .h-points .pt { position: relative; display: grid; place-items: center; width: calc(var(--k) * 14px); height: calc(var(--k) * 14px);
   border: calc(var(--k) * 1px) solid; border-radius: 2px; box-shadow: 0 2px 0 rgba(0,0,0,.6); }
-.h-points .pt i { position: absolute; left: 0; bottom: 0; height: calc(var(--k) * 1.5px); }
+.h-points .pt i { position: absolute; bottom: 0; height: calc(var(--k) * 1.5px); }
 .h-boss { position: absolute; left: 50%; top: calc(var(--k) * 3px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(var(--k) * 2px); }
 .h-boss .bar { width: calc(var(--k) * 140px); height: calc(var(--k) * 4px); background: rgba(0,0,0,.6); border: 1px solid rgba(255, 90, 50, .6); border-radius: 2px; overflow: hidden; }
 .h-boss .bar i { display: block; height: 100%; background: linear-gradient(#ff4a2a, #8c0a04); }
 .h-banner { position: absolute; left: 0; right: 0; top: 30%; display: flex; justify-content: center; filter: drop-shadow(0 3px 0 rgba(0,0,0,.7)); }
 .h-scores .title.sub { margin-top: calc(var(--k) * -2px); }
+
+/* war and battle royale: the minimap (top right, under the score line; the killfeed moves under it), M = large */
+.h-map { position: absolute; right: calc(var(--k) * 4px); top: calc(var(--k) * 14px); line-height: 0;
+  border: 1px solid rgba(255, 210, 140, .28); border-radius: 3px; box-shadow: 0 2px 0 rgba(0,0,0,.6), 0 6px 18px rgba(0,0,0,.35); }
+.h-map canvas { image-rendering: auto; }
+.h-map.big { right: auto; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1; border-color: rgba(255, 210, 140, .45); }
+#hud.with-map .h-feed { top: calc(var(--k) * 18px + var(--map-h, calc(var(--k) * 112px))); }
+.h-zone { position: absolute; left: 50%; top: calc(var(--k) * 3px); transform: translateX(-50%); filter: drop-shadow(0 2px 0 rgba(0,0,0,.7)); }
+.h-capture { position: absolute; left: 50%; top: calc(50% + var(--k) * 14px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(var(--k) * 2px);
+  filter: drop-shadow(0 2px 0 rgba(0,0,0,.7)); }
+.h-capture .cbar { position: relative; width: calc(var(--k) * 60px); height: calc(var(--k) * 3px); background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.3); border-radius: 2px; overflow: hidden; }
+.h-capture .cbar i { position: absolute; top: 0; bottom: 0; }
+/* the scope: a dark vignette with a thin crosshair */
+.h-scope { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, transparent 0, transparent 30vmin, rgba(0,0,0,.55) 33vmin, rgba(0,0,0,.94) 36vmin); }
+.h-scope::before, .h-scope::after { content: ""; position: absolute; left: 50%; top: 50%; background: rgba(10, 10, 10, .85); box-shadow: 0 0 0 .5px rgba(255,255,255,.12); }
+.h-scope::before { width: 1px; height: 64vmin; transform: translate(-50%, -50%); }
+.h-scope::after { height: 1px; width: 64vmin; transform: translate(-50%, -50%); }
 
 /* Esc menu */
 .pause { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(5, 2, 2, .62); backdrop-filter: blur(2px); }
@@ -67,3 +86,12 @@
 .pause .seg { display: inline-flex; border: 1px solid rgba(255,130,70,.35); border-radius: 4px; overflow: hidden; }
 .pause .seg button { padding: 5px 10px; background: transparent; border: 0; color: #ccc; font-size: 13px; }
 .pause .seg button[aria-pressed="true"] { background: #9b0c06; color: #fff; }
+
+/* battle royale v2: the lobby panel */
+.h-lobby { position: absolute; left: calc(var(--k) * 4px); top: calc(var(--k) * 30px); max-width: min(46vw, calc(var(--k) * 230px));
+  padding: calc(var(--k) * 4px) calc(var(--k) * 5px); background: rgba(8, 4, 3, .78); border: 1px solid rgba(255, 210, 140, .25); border-radius: 4px;
+  display: flex; flex-direction: column; gap: calc(var(--k) * 2px); }
+.h-lobby .plist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(var(--k) * 1px) calc(var(--k) * 6px); margin: calc(var(--k) * 2px) 0; }
+.h-lobby .plist > div { display: flex; align-items: center; gap: calc(var(--k) * 2px); overflow: hidden; }
+.h-lobby .plist i { width: calc(var(--k) * 3px); height: calc(var(--k) * 3px); flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.h-lobby .tips { display: flex; flex-direction: column; gap: calc(var(--k) * 1px); border-top: 1px solid rgba(255,255,255,.1); padding-top: calc(var(--k) * 2px); }

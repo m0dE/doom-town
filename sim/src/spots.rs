@@ -15,13 +15,22 @@ const GRID: i32 = 128;
 
 pub fn build_spawn_spots(map: &Map) -> Vec<MapThing> {
     let mut spots: Vec<MapThing> = Vec::new();
+    // battle royale: nothing on (or near) the lobby island, things 9030
+    let lobby: Option<(i32, i32, i32, i32)> = map.things.iter().filter(|t| t.type_ == LOBBY_THING).fold(None, |b, t| {
+        let (x, y) = (t.x as i32, t.y as i32);
+        Some(match b {
+            None => (x - 512, y - 512, x + 512, y + 512),
+            Some((x0, y0, x1, y1)) => (x0.min(x - 512), y0.min(y - 512), x1.max(x + 512), y1.max(y + 512)),
+        })
+    });
+    let in_lobby = |x: i32, y: i32| lobby.is_some_and(|(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1);
     for t in &map.things {
-        if t.type_ == 11 {
+        if t.type_ == 11 && !in_lobby(t.x as i32, t.y as i32) {
             spots.push(*t);
         }
     }
     for t in &map.things {
-        if (1..=4).contains(&t.type_) || t.type_ == 9000 || t.type_ == 9001 {
+        if ((1..=4).contains(&t.type_) || t.type_ == 9000 || t.type_ == 9001) && !in_lobby(t.x as i32, t.y as i32) {
             spots.push(*t);
         }
     }
@@ -72,7 +81,7 @@ pub fn build_spawn_spots(map: &Map) -> Vec<MapThing> {
             if spots.len() >= MAX_SPOTS {
                 break;
             }
-            if x.abs() > 32000 || y.abs() > 32000 {
+            if x.abs() > 32000 || y.abs() > 32000 || in_lobby(x, y) {
                 continue;
             }
             let fx = x << FRACBITS;

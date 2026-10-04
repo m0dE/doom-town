@@ -16,6 +16,8 @@ use crate::map::{Map, MapThing};
 use crate::random::{BotRng, PRandom};
 use crate::specials::*;
 use crate::game::{CapPoint, Config, Game};
+use crate::drop::Ship;
+use crate::royale::{BrRules, Supply, Zone};
 use crate::world::*;
 
 pub const FORMAT_VERSION: u32 = 2;
@@ -191,12 +193,13 @@ ser_struct!(Step { node, px, py, kind, line });
 ser_struct!(Bot {
     rng, aim_err, react, turn, aggression, path, goal_node, goal_x, goal_y, goal_item, need_plan, next_goal_tic, last_x, last_y, check_x, check_y, check_tic, stuck,
     unstick_until, unstick_side, ban_a, ban_b, ban_until, wait_tics, enemy, enemy_seen, enemy_x, enemy_y, enemy_z, react_left, err_yaw, err_pitch, err_until, strafe,
-    strafe_until, fire_toggle, use_toggle, weapon_key, weapon_cooldown, respawn_delay, hurt_by, yaw, pitch, goal_point
+    strafe_until, fire_toggle, use_toggle, weapon_key, weapon_cooldown, respawn_delay, hurt_by, yaw, pitch, goal_point, drop_x, drop_y, drop_t, calm_until
 });
 ser_struct!(Player {
     slot, mo, playerstate, control, cmd, human_cmd, prev_buttons, yaw_offset, pitch, viewz, viewheight, deltaviewheight, bob, onground, health, armorpoints, armortype,
     powers, backpack, frags, deaths, readyweapon, pendingweapon, weaponowned, ammo, maxammo, attackdown, usedown, refire, damagecount, bonuscount, attacker,
-    extralight, fixedcolormap, psprites, dead_tics, jump_cooldown, fresh, color, items, travelled, spawn_choice, spec_cycle, bot
+    extralight, fixedcolormap, psprites, dead_tics, jump_cooldown, fresh, color, items, travelled, spawn_choice, spec_cycle, air, ax, ay, az, aangle, air_mo, vehicle,
+    grenades, grenade_cd, bot
 });
 ser_enum!(DoorType { Normal = 0, Close30ThenOpen = 1, Close = 2, Open = 3, RaiseIn5Mins = 4, BlazeRaise = 5, BlazeOpen = 6, BlazeClose = 7 });
 ser_struct!(Door { type_, sector, topheight, speed, direction, topwait, topcountdown });
@@ -210,6 +213,10 @@ ser_enum!(FloorType {
 ser_struct!(FloorMove { type_, crush, sector, direction, newspecial, texture, floordestheight, speed });
 ser_enum!(CeilingType { LowerToFloor = 0, RaiseToHighest = 1, LowerAndCrush = 2, CrushAndRaise = 3, FastCrushAndRaise = 4, SilentCrushAndRaise = 5 });
 ser_struct!(CapPoint { owner, progress, flags });
+ser_struct!(Zone { stage, state, left, x, y, r, fx, fy, fr, nx, ny, nr, r0, clock, bx0, by0, bx1, by1 });
+ser_struct!(Ship { mo, x, y, z, dx, dy, angle, left });
+ser_struct!(Supply { x, y, state, timer, mo });
+ser_struct!(BrRules { lobby_tics, drop_alt, start_bullets, vehicles, supply, stages, loot });
 ser_struct!(Ceiling { type_, sector, bottomheight, topheight, speed, crush, direction, tag, olddirection });
 
 impl Ser for SThinker {
@@ -256,6 +263,7 @@ impl World {
         for x in [c.mode, c.slots, c.match_tics, c.inter_tics, c.round_tics, c.freeze_tics, c.rounds_to_win, c.tickets, c.friendly_fire as u32, c.flags] {
             x.put(&mut w);
         }
+        c.br.put(&mut w);
         (self.g.maps.len() as u32).put(&mut w);
         for m in &self.g.maps {
             let name = m.name.as_bytes();
@@ -279,6 +287,9 @@ impl World {
         self.g.boss_timer.put(&mut w);
         self.g.boss_drop.put(&mut w);
         self.g.boss_tries.put(&mut w);
+        self.g.zone.put(&mut w);
+        self.g.ship.put(&mut w);
+        self.g.supply.put(&mut w);
         self.tic.put(&mut w);
         self.leveltime.put(&mut w);
         self.rng.put(&mut w);
@@ -331,7 +342,8 @@ impl World {
         for x in cw.iter_mut() {
             *x = u32::get(&mut r)?;
         }
-        let cfg = Config { mode: cw[0], slots: cw[1], match_tics: cw[2], inter_tics: cw[3], round_tics: cw[4], freeze_tics: cw[5], rounds_to_win: cw[6], tickets: cw[7], friendly_fire: cw[8] != 0, flags: cw[9] };
+        let br = BrRules::get(&mut r)?;
+        let cfg = Config { mode: cw[0], slots: cw[1], match_tics: cw[2], inter_tics: cw[3], round_tics: cw[4], freeze_tics: cw[5], rounds_to_win: cw[6], tickets: cw[7], friendly_fire: cw[8] != 0, flags: cw[9], br };
         if cfg.clone().with_defaults() != cfg {
             return None;
         }
@@ -367,8 +379,11 @@ impl World {
         g.boss_timer = Ser::get(&mut r)?;
         g.boss_drop = Ser::get(&mut r)?;
         g.boss_tries = Ser::get(&mut r)?;
+        g.zone = Ser::get(&mut r)?;
+        g.ship = Ser::get(&mut r)?;
+        g.supply = Ser::get(&mut r)?;
         let map = g.maps[g.map_index as usize].clone();
-        if g.phase > crate::game::PH_INTER || (cfg_mode_war(&g) && g.points.len() != map.cap_points.len()) || (!cfg_mode_war(&g) && !g.points.is_empty()) {
+        if g.phase > crate::game::PH_DROP || (cfg_mode_war(&g) && g.points.len() != map.cap_points.len()) || (!cfg_mode_war(&g) && !g.points.is_empty()) {
             return None;
         }
         let nlines = map.lines.len();
@@ -521,7 +536,7 @@ impl World {
             if p.bot.path.iter().any(|st| st.node as usize >= map.subsectors.len()) || p.bot.goal_node >= map.subsectors.len() as i32 {
                 return None;
             }
-            if p.playerstate > PST_REBORN || p.control > CTRL_IDLE {
+            if p.playerstate > PST_REBORN || p.control > CTRL_IDLE || p.air > crate::drop::AIR_CHUTE {
                 return None;
             }
         }

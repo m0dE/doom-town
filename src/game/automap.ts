@@ -5,6 +5,7 @@
  */
 import type { RenderFrame } from '../render/types.js';
 import type { MapData } from '../wad/index.js';
+import { MT_CRATE } from './br.js';
 
 export interface WorldView {
   readonly canvas: HTMLCanvasElement;
@@ -63,6 +64,12 @@ export class AutomapView implements WorldView {
         c.save(); c.translate(o.x, o.y); c.rotate(o.angle);
         c.beginPath(); c.moveTo(24, 0); c.lineTo(-14, 12); c.lineTo(-14, -12); c.closePath(); c.fill();
         c.restore();
+      } else if (o.type === MT_CRATE) {
+        // a battle royale crate: its 40 x 40 footprint
+        c.fillStyle = '#b07a3c';
+        c.fillRect(o.x - 20, o.y - 20, 40, 40);
+        c.strokeStyle = '#5a3a18';
+        c.strokeRect(o.x - 20, o.y - 20, 40, 40);
       } else {
         c.fillStyle = (o.flags & 0x10000) ? '#ff8040' : '#8080ff';
         c.fillRect(o.x - 6, o.y - 6, 12, 12);

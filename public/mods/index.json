@@ -1,0 +1,42 @@
+[
+  {
+    "id": "br01",
+    "title": "Doom Town Royale",
+    "author": "Doom Town",
+    "mode": "battle-royale",
+    "map": "BR01",
+    "slots": 64,
+    "bytes": 2314909,
+    "description": "64 marines, one island, one survivor."
+  },
+  {
+    "id": "arena",
+    "title": "Reactor Arena",
+    "author": "Doom Town examples",
+    "mode": "deathmatch",
+    "map": "ARENA",
+    "slots": 16,
+    "bytes": 81777,
+    "description": "A tight 16-player deathmatch around a flooded reactor core. The modding guide's first example."
+  },
+  {
+    "id": "hill3",
+    "title": "Three Hills",
+    "author": "Doom Town examples",
+    "mode": "war",
+    "map": "HILL3",
+    "slots": 32,
+    "bytes": 382385,
+    "description": "16 v 16 war in a small valley: two watchtowers and the hill between them. The modding guide's second example."
+  },
+  {
+    "id": "snipers",
+    "title": "Snipers Only Royale",
+    "author": "Doom Town examples",
+    "mode": "battle-royale",
+    "map": "BR01",
+    "slots": 64,
+    "bytes": 2314851,
+    "description": "Doom Town with crates full of sniper rifles and a storm that closes in under four minutes. The modding guide's third example."
+  }
+]

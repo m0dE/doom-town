@@ -81,6 +81,8 @@ pub const MF_SKULLFLY: u32 = 0x1000000;
 pub const MF_NOTDMATCH: u32 = 0x2000000;
 pub const MF_TRANSLATION: u32 = 0xc000000;
 pub const MF_TRANSSHIFT: u32 = 26;
+/// battle royale: a supply-drop crate (unused by vanilla)
+pub const MF_SUPPLY: u32 = 0x2000_0000;
 
 pub const FF_FULLBRIGHT: i32 = 0x8000;
 pub const FF_FRAMEMASK: i32 = 0x7fff;
@@ -95,7 +97,10 @@ pub const WP_PLASMA: i32 = 5;
 pub const WP_BFG: i32 = 6;
 pub const WP_CHAINSAW: i32 = 7;
 pub const WP_SUPERSHOTGUN: i32 = 8;
-pub const NUMWEAPONS: usize = 9;
+/// battle royale v2: the sniper rifle (bullets, 5 a shot)
+pub const WP_SNIPER: i32 = 9;
+pub const NUMWEAPONS: usize = 10;
+pub const SNIPER_AMMO: i32 = 5;
 pub const WP_NOCHANGE: i32 = 10;
 
 // ammo
@@ -139,7 +144,18 @@ pub const WEAPONINFO: [WeaponInfo; NUMWEAPONS] = [
     WeaponInfo { ammo: AM_CELL, upstate: st::BFGUP as i32, downstate: st::BFGDOWN as i32, readystate: st::BFG as i32, atkstate: st::BFG1 as i32, flashstate: st::BFGFLASH1 as i32 },
     WeaponInfo { ammo: AM_NOAMMO, upstate: st::SAWUP as i32, downstate: st::SAWDOWN as i32, readystate: st::SAW as i32, atkstate: st::SAW1 as i32, flashstate: st::NULL as i32 },
     WeaponInfo { ammo: AM_SHELL, upstate: st::DSGUNUP as i32, downstate: st::DSGUNDOWN as i32, readystate: st::DSGUN as i32, atkstate: st::DSGUN1 as i32, flashstate: st::DSGUNFLASH1 as i32 },
+    WeaponInfo { ammo: AM_CLIP, upstate: st::SNIPERUP as i32, downstate: st::SNIPERDOWN as i32, readystate: st::SNIPER as i32, atkstate: st::SNIPER1 as i32, flashstate: st::SNIPERFLASH as i32 },
 ];
+
+/// ammo a shot of weapon `w` takes
+pub fn ammo_per_shot(w: i32) -> i32 {
+    match w {
+        WP_BFG => 40,
+        WP_SUPERSHOTGUN => 2,
+        WP_SNIPER => SNIPER_AMMO,
+        _ => 1,
+    }
+}
 
 pub const MAXAMMO: [i32; NUMAMMO] = [200, 50, 300, 50];
 pub const CLIPAMMO: [i32; NUMAMMO] = [10, 4, 20, 1];
@@ -178,6 +194,9 @@ pub mod msg {
     pub const GOTPLASMA: i32 = 29;
     pub const GOTSHOTGUN: i32 = 30;
     pub const GOTSHOTGUN2: i32 = 31;
+    /// battle royale v2
+    pub const GOTSNIPER: i32 = 32;
+    pub const GOTGRENADES: i32 = 33;
 }
 
 /// Means of death (obituary event `mod`).
@@ -198,4 +217,12 @@ pub mod mod_ {
     pub const SPLASH: i32 = 13;
     pub const BERSERK: i32 = 14;
     pub const FALL: i32 = 15;
+    /// battle royale: caught outside the zone
+    pub const ZONE: i32 = 16;
+    /// run over by a buggy
+    pub const ROADKILL: i32 = 17;
+    /// a grenade
+    pub const GRENADE: i32 = 18;
+    /// the sniper rifle
+    pub const SNIPER: i32 = 19;
 }

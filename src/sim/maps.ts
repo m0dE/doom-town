@@ -6,7 +6,7 @@
  * must be known synchronously and identically on every client. `checkIndex` warns at
  * runtime if the shipped index.json ever disagrees.
  */
-export type RotationKey = 'deathmatch' | 'teamDeathmatch' | 'elimination' | 'war';
+export type RotationKey = 'deathmatch' | 'teamDeathmatch' | 'elimination' | 'war' | 'battleRoyale';
 
 export const ROTATIONS: Record<RotationKey, readonly string[]> = {
   deathmatch: [
@@ -34,6 +34,9 @@ export const ROTATIONS: Record<RotationKey, readonly string[]> = {
   war: [
     'WAR01',
     'WAR02'
+  ],
+  battleRoyale: [
+    'BR01'
   ]
 };
 
@@ -49,7 +52,8 @@ export const MAP_TITLES: Record<string, string> = {
   'MAP18': 'DM18: Deserted Courtyard',
   'MAP17': 'DM17: Underwoods',
   'WAR01': 'WAR01: Nukage Front',
-  'WAR02': 'WAR02: Canal City'
+  'WAR02': 'WAR02: Canal City',
+  'BR01': 'BR01: Doom Town'
 };
 
 export function mapTitle(name: string): string { return MAP_TITLES[name] ?? name; }

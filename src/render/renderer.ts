@@ -14,6 +14,8 @@ import { buildAoTexture, buildGeometry, type MapGeometry } from './geometry';
 import { LightManager } from './lights';
 import { PostFX } from './post';
 import { SectorLightFx } from './sectorfx';
+import { CRATE_FS, CRATE_VS, CrateBatch, MT_CRATE } from './crates';
+import { MF_SUPPLY, MT_DROPSHIP, MT_BUGGY, RoyaleLayer } from './br';
 import {
   FLAT_FS, FLAT_VS, MAX_LIGHTS, PSPRITE_FS, PSPRITE_VS, SKY_FS, SKY_VS, SPRITE_FS, SPRITE_VS, WALL_FS, WALL_VS,
 } from './shaders';
@@ -96,7 +98,7 @@ export class Renderer {
   readonly geometry: MapGeometry;
   readonly gl: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(60, 1, 2, 30000);
+  readonly camera = new THREE.PerspectiveCamera(60, 1, 2, 65536);
   readonly options: Required<RendererOptions>;
   /** frame statistics (for debug overlays) */
   readonly stats = { sprites: 0, lights: 0, calls: 0, triangles: 0 };
@@ -118,6 +120,10 @@ export class Renderer {
   private simFlat: Int32Array | null = null;
   private sprites = new SpriteBatch(SPRITE_CAP);
   private fuzz = new SpriteBatch(FUZZ_CAP);
+  private crates = new CrateBatch();
+  /** battle royale: storm, vehicles, dropship, canopies, supply smoke, the sky from above */
+  private royale: RoyaleLayer;
+  private flatMat: THREE.Material;
   private psp = new THREE.InstancedBufferGeometry();
   private pspScreen = new Float32Array(8); private pspRect = new Float32Array(8); private pspInfo = new Float32Array(8);
   private pspAttrs: THREE.InstancedBufferAttribute[] = [];
@@ -184,7 +190,7 @@ export class Renderer {
       uSides: { value: this.sideTex }, uTic: { value: 0 }, uTime: { value: 0 },
       uAo: { value: ao.tex }, uAoXform: { value: new THREE.Vector4(ao.origin[0], ao.origin[1], 1 / (ao.cell * ao.size[0]), 1 / (ao.cell * ao.size[1])) },
       uAoStrength: { value: this.options.ao },
-      uSkyTex: { value: this.assets.skyTexId }, uSkyTop: { value: this.skyTopColor() }, uSkyStretch: { value: 160 }, // Doom: 1 sky texel per row of a 320x200 view (160 rows per unit tan)
+      uSkyTex: { value: this.assets.skyTexId }, uSkyTop: { value: this.skyTopColor() }, uSkyBottom: { value: this.skyTopColor(true) }, uSkyStretch: { value: 160 }, // Doom: 1 sky texel per row of a 320x200 view (160 rows per unit tan)
       uSpriteAtlas: { value: this.assets.spriteAtlas }, uTrans: { value: this.assets.transTex },
       uPspLevel: { value: 0 }, uPspLight: { value: new THREE.Vector3() }, uPspGlow: { value: 0.2 },
     };
@@ -198,7 +204,7 @@ export class Renderer {
       this.scene.add(o);
       return o;
     };
-    mesh(this.geometry.flats, mat(FLAT_VS, FLAT_FS), 0);
+    this.flatMat = mesh(this.geometry.flats, mat(FLAT_VS, FLAT_FS), 0).material as THREE.Material;
     mesh(this.geometry.walls, mat(WALL_VS, WALL_FS), 1);
     mesh(this.geometry.sky, mat(SKY_VS, SKY_FS), 2);
     mesh(this.geometry.masked, mat(WALL_VS, WALL_FS, { side: THREE.FrontSide }), 3);
@@ -208,6 +214,14 @@ export class Renderer {
       blendEquation: THREE.AddEquation, blendSrc: THREE.ZeroFactor, blendDst: THREE.SrcColorFactor,
       blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     }, { uFuzz: { value: 1 } }), 5);
+    // battle royale crates: boxes, not sprites
+    mesh(this.crates.geo, mat(CRATE_VS, CRATE_FS, { side: THREE.FrontSide }, {
+      uCrateSide: { value: this.assets.textureId('CRATE1') }, uCrateTop: { value: this.assets.flatId('CRATOP2') },
+    }), 4);
+
+    let zMin = Infinity, zMax = -Infinity;
+    for (const s of this.map.sectors) { zMin = Math.min(zMin, s.floor); zMax = Math.max(zMax, s.ceil); }
+    this.royale = new RoyaleLayer(this.scene, this.u, this.assets.pal, zMin, zMax, SPR_PLAY);
 
     // psprites (screen space)
     this.psp.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0], 3));
@@ -251,6 +265,17 @@ export class Renderer {
     this.bodyRenderer = r;
   }
 
+  /**
+   * A temporary field of view (the scope), degrees at 4:3 like `fov`; null = the
+   * options' own. Cheap: only the projection changes, so it may move every frame.
+   */
+  setZoomFov(deg: number | null): void {
+    if (deg === this.zoomFov) return;
+    this.zoomFov = deg;
+    if (this.lastW) this.updateProjection();
+  }
+  private zoomFov: number | null = null;
+
   setOptions(o: RendererOptions): void {
     Object.assign(this.options, o);
     this.applyOptions();
@@ -292,6 +317,15 @@ export class Renderer {
     if (f.lineTextures && this.simTex) this.applyLineTextures(f.lineTextures);
 
     // ---- camera -------------------------------------------------------------------
+    // above the world (dropship, skydiving): the sky dome behind everything, ceilings
+    // seen from above as roofs, and a nearer plane pushed out for depth precision
+    const camSec = this.sectorAt(cam.x, cam.y);
+    const above = cam.z > (this.ceilH[camSec] ?? Infinity) + 1;
+    this.royale.sky.mesh.visible = above;
+    const side = above ? THREE.DoubleSide : THREE.FrontSide;
+    if (this.flatMat.side !== side) { this.flatMat.side = side; this.flatMat.needsUpdate = true; }
+    const near = above ? Math.max(2, Math.min(32, (cam.z - this.ceilH[camSec]) / 32)) : 2;
+    if (near !== this.camera.near) { this.camera.near = near; this.camera.updateProjectionMatrix(); }
     const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     this.camera.position.set(cam.x, cam.y, cam.z);
     this.camera.lookAt(cam.x + cy * cp, cam.y + sy * cp, cam.z + sp);
@@ -322,19 +356,38 @@ export class Renderer {
     const count = f.mobjCount ?? f.mobjs.length;
     const viewId = f.viewMobjId ?? -1;
     this.lights.begin();
+    this.royale.begin(f.mobjs, count, {
+      camera: this.camera, tic, time: now,
+      floorAt: (x, y) => this.floorH[this.sectorAt(x, y)] ?? 0,
+      addLight: (x, y, z, rad, r, g, b) => { if (this.options.dynamicLights) this.lights.add(x, y, z, rad, r, g, b, this.sectorAt(x, y)); },
+    });
     this.sprites.count = 0;
     this.fuzz.count = 0;
+    this.crates.count = 0;
     this.mobjById.clear();
     this.slotMobj.clear();
     let nb = 0;
     const useBodies = this.bodyRenderer !== null;
     for (let i = 0; i < count; i++) {
-      const m = f.mobjs[i];
+      let m = f.mobjs[i];
       this.mobjById.set(m.id, m);
       if (m.slot >= 0) this.slotMobj.set(m.slot, m);
       const sector = this.sectorAt(m.x, m.y);
       if (this.options.dynamicLights) this.lights.addMobj(m, sector, now);
+      if (m.type >= MT_DROPSHIP && m.type <= MT_BUGGY) {
+        // our own parachuter (the view's) still shows its canopy overhead, not its body
+        const body = this.royale.mobj(m, sector, this.lightLv[sector] ?? 255, m.id === viewId);
+        if (!body || m.id === viewId) continue;
+        m = body;
+      }
       if (m.id === viewId) continue;
+      if (m.type === MT_CRATE) {
+        const supply = (m.flags & MF_SUPPLY) !== 0;
+        this.crates.push(m.x, m.y, m.z, sector, 20, 40, this.lightLv[sector] ?? 255, supply);
+        if (supply) this.royale.supply(m);
+        continue;
+      }
+      if (m.slot >= 0 && m.sprite === SPR_PLAY && m.pose === undefined) m = this.royale.seat(m);
       if (useBodies && m.sprite === SPR_PLAY) {
         this.bodies[nb++] = m;
         continue;
@@ -343,6 +396,8 @@ export class Renderer {
     }
     this.sprites.commit();
     this.fuzz.commit();
+    this.crates.commit();
+    this.post.composite.uniforms.uStorm.value = this.royale.finish(f.royale, cam.x, cam.y);
     this.stats.sprites = this.sprites.count + this.fuzz.count;
 
     // the local player's muzzle flash (its own body is not drawn, so PLAY frame F doesn't
@@ -396,6 +451,7 @@ export class Renderer {
 
   dispose(): void {
     this.bodyRenderer?.dispose?.();
+    this.royale.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); }
     });
@@ -434,8 +490,14 @@ export class Renderer {
     this.gl.setSize(w, h, false);
     this.post.setSize(w, h);
     this.u.uViewport.value.set(w, h);
+    this.updateProjection();
+  }
+
+  /** The camera's projection from the field of view (the zoom's when one is set) and the size. */
+  private updateProjection(): void {
+    const w = Math.max(1, this.lastW), h = Math.max(1, this.lastH);
     // Hor+: vertical extent fixed by the 4:3 reference, horizontal grows with the aspect
-    const tx43 = Math.tan((this.options.fov * Math.PI) / 360);
+    const tx43 = Math.tan(((this.zoomFov ?? this.options.fov) * Math.PI) / 360);
     const ty = (tx43 * 0.75) / this.options.pixelAspect;
     const tx = ty * (w / h) * this.options.pixelAspect;
     this.camera.fov = (2 * Math.atan(ty) * 180) / Math.PI;
@@ -521,11 +583,12 @@ export class Renderer {
     for (const a of this.pspAttrs) a.needsUpdate = true;
   }
 
-  private skyTopColor(): THREE.Vector3 {
+  private skyTopColor(bottom = false): THREE.Vector3 {
     const id = this.assets.skyTexId;
     const out = new THREE.Vector3(0.2, 0.2, 0.25);
     if (id < 0) return out;
-    const r = this.assets.atlasRects[id];
+    const r0 = this.assets.atlasRects[id];
+    const r = bottom ? { ...r0, y: r0.y + r0.h - 1 } : r0;
     const data = this.assets.atlas.image.data as Uint8Array;
     const aw = this.assets.atlas.image.width;
     let R = 0, G = 0, B = 0;

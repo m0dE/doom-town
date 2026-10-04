@@ -6,6 +6,7 @@
 // freeze=1 (no time), map=MAP19. window.__viewer exposes the renderer for scripting.
 import { Renderer, type RenderFrame, type RenderMobj } from './render';
 import { SoundBank } from './audio';
+import { ModelBodies } from './game/bodies';
 import {
   FF_FULLBRIGHT, MF_SHADOW, PLAYER_COLORS, THING_DEFS, loadWad, spriteNum,
 } from './wad';
@@ -23,7 +24,14 @@ const t0 = performance.now();
 const res = await fetch('./freedm-lite.wad');
 const bytes = new Uint8Array(await res.arrayBuffer());
 const wad = loadWad(bytes);
+// ?mod=mods/br01.wad (or ?pwad=): a mod / map pak over the base, for its map and art
+for (const url of params.getAll('mod').concat(params.getAll('pwad'))) {
+  const r = await fetch(url.startsWith('/') || url.includes('://') ? url : `./${url}`);
+  if (r.ok) wad.add(new Uint8Array(await r.arrayBuffer()));
+}
 const renderer = new Renderer(canvas, wad, MAP);
+// ?bodies=3d: players as the 3D marine (the game's default) instead of sprites
+if (params.get('bodies') === '3d') renderer.setPlayerBodyRenderer(new ModelBodies(wad));
 const loadMs = performance.now() - t0;
 const map = renderer.map;
 const sound = new SoundBank(wad);
@@ -118,12 +126,15 @@ addEventListener('mousedown', (e) => { if (document.pointerLockElement === canva
 addEventListener('mouseup', () => { firing = 0; });
 
 let weapon = (params.get('weapon') || 'SHTG').toUpperCase();
-const FLASH: Record<string, string> = { PISG: 'PISF', SHTG: 'SHTF', MISG: 'MISF', PLSG: 'PLSF', BFGG: 'BFGF', CHGG: 'CHGF', SHT2: 'SHT2' };
+const FLASH: Record<string, string> = { SNPG: 'SNPF', PISG: 'PISF', SHTG: 'SHTF', MISG: 'MISF', PLSG: 'PLSF', BFGG: 'BFGF', CHGG: 'CHGF', SHT2: 'SHT2' };
 let flashUntil = -1;
+let weaponFrame = 0, forceFlash = false;
 let lastShot = -10;
 
 // ---- frame ------------------------------------------------------------------------
 const mobjs: RenderMobj[] = [];
+/** staged mobjs (scripting: buggies, the dropship, parachuters, crates) drawn every frame */
+const extra: RenderMobj[] = [];
 // ?dark=N overrides every sector's light level (MAP19 is uniformly bright: 224)
 const dark = params.get('dark');
 const sectorsOverride = dark === null ? null : map.sectors.map((s) => ({ floor: s.floor, ceil: s.ceil, light: Number(dark) }));
@@ -188,6 +199,7 @@ function step(dt: number) {
     }
     mobjs[n++] = m;
   }
+  for (const m of extra) mobjs[n++] = m;
   frame.mobjCount = n;
 
   // weapon psprite with Doom's bob (P_CalcPlayerSprite-ish)
@@ -207,8 +219,9 @@ function step(dt: number) {
     else sound.play(weapon === 'SHTG' ? 'shotgn' : 'pistol', null);
   }
   const flashing = simTime < flashUntil && FLASH[weapon];
-  pl.weapon!.frame = 0;
-  if (flashing) { flashPs.sprite = spriteNum(FLASH[weapon]); flashPs.sx = pl.weapon!.sx; flashPs.sy = pl.weapon!.sy; pl.flash = flashPs; }
+  pl.weapon!.frame = weaponFrame;
+  if (forceFlash) { flashPs.sprite = spriteNum(FLASH[weapon] ?? 'PISF'); flashPs.sx = pl.weapon!.sx; flashPs.sy = pl.weapon!.sy; pl.flash = flashPs; }
+  else if (flashing) { flashPs.sprite = spriteNum(FLASH[weapon]); flashPs.sx = pl.weapon!.sx; flashPs.sy = pl.weapon!.sy; pl.flash = flashPs; }
   else pl.flash = null;
   pl.extralight = flashing ? 1 : 0;
   sound.setListener(cam.x, cam.y, cam.yaw);
@@ -236,7 +249,9 @@ requestAnimationFrame(loop);
 
 // scripting hook (screenshots / benchmarks)
 (window as unknown as { __viewer: unknown }).__viewer = {
-  renderer, frame, cam, bots, projs, fire, step, makeBots,
+  renderer, frame, cam, bots, projs, fire, step, makeBots, extra, mkMobj, floorAt, spriteNum,
+  /** the weapon psprite's frame (e.g. 1 = SNPG B) and whether the flash shows */
+  setWeaponFrame(fr: number, flash = false) { weaponFrame = fr; forceFlash = flash; },
   setCamera(x: number, y: number, z: number | null, yawDeg: number, pitchDeg = 0) {
     cam.x = x; cam.y = y; cam.z = z ?? floorAt(x, y) + 41; cam.yaw = (yawDeg * Math.PI) / 180; cam.pitch = (pitchDeg * Math.PI) / 180;
   },

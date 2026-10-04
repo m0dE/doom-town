@@ -6,17 +6,17 @@
 // DO NOT EDIT BY HAND.
 #![allow(clippy::all, non_upper_case_globals, dead_code)]
 use crate::info::{State, MobjInfo};
-pub const NUMSPRITES: usize = 138;
-pub const NUMSTATES: usize = 967;
-pub const NUMMOBJTYPES: usize = 137;
+pub const NUMSPRITES: usize = 142;
+pub const NUMSTATES: usize = 983;
+pub const NUMMOBJTYPES: usize = 144;
 pub const NUMSFX: usize = 109;
-pub const SPRNAMES: [&str; NUMSPRITES] = ["TROO","SHTG","PUNG","PISG","PISF","SHTF","SHT2","CHGG","CHGF","MISG","MISF","SAWG","PLSG","PLSF","BFGG","BFGF","BLUD","PUFF","BAL1","BAL2","PLSS","PLSE","MISL","BFS1","BFE1","BFE2","TFOG","IFOG","PLAY","POSS","SPOS","VILE","FIRE","FATB","FBXP","SKEL","MANF","FATT","CPOS","SARG","HEAD","BAL7","BOSS","BOS2","SKUL","SPID","BSPI","APLS","APBX","CYBR","PAIN","SSWV","KEEN","BBRN","BOSF","ARM1","ARM2","BAR1","BEXP","FCAN","BON1","BON2","BKEY","RKEY","YKEY","BSKU","RSKU","YSKU","STIM","MEDI","SOUL","PINV","PSTR","PINS","MEGA","SUIT","PMAP","PVIS","CLIP","AMMO","ROCK","BROK","CELL","CELP","SHEL","SBOX","BPAK","BFUG","MGUN","CSAW","LAUN","PLAS","SHOT","SGN2","COLU","SMT2","GOR1","POL2","POL5","POL4","POL3","POL1","POL6","GOR2","GOR3","GOR4","GOR5","SMIT","COL1","COL2","COL3","COL4","CAND","CBRA","COL6","TRE1","TRE2","ELEC","CEYE","FSKU","COL5","TBLU","TGRN","TRED","SMBT","SMGT","SMRT","HDB1","HDB2","HDB3","HDB4","HDB5","HDB6","POB1","POB2","BRS1","TLMP","TLP2"];
+pub const SPRNAMES: [&str; NUMSPRITES] = ["TROO","SHTG","PUNG","PISG","PISF","SHTF","SHT2","CHGG","CHGF","MISG","MISF","SAWG","PLSG","PLSF","BFGG","BFGF","BLUD","PUFF","BAL1","BAL2","PLSS","PLSE","MISL","BFS1","BFE1","BFE2","TFOG","IFOG","PLAY","POSS","SPOS","VILE","FIRE","FATB","FBXP","SKEL","MANF","FATT","CPOS","SARG","HEAD","BAL7","BOSS","BOS2","SKUL","SPID","BSPI","APLS","APBX","CYBR","PAIN","SSWV","KEEN","BBRN","BOSF","ARM1","ARM2","BAR1","BEXP","FCAN","BON1","BON2","BKEY","RKEY","YKEY","BSKU","RSKU","YSKU","STIM","MEDI","SOUL","PINV","PSTR","PINS","MEGA","SUIT","PMAP","PVIS","CLIP","AMMO","ROCK","BROK","CELL","CELP","SHEL","SBOX","BPAK","BFUG","MGUN","CSAW","LAUN","PLAS","SHOT","SGN2","COLU","SMT2","GOR1","POL2","POL5","POL4","POL3","POL1","POL6","GOR2","GOR3","GOR4","GOR5","SMIT","COL1","COL2","COL3","COL4","CAND","CBRA","COL6","TRE1","TRE2","ELEC","CEYE","FSKU","COL5","TBLU","TGRN","TRED","SMBT","SMGT","SMRT","HDB1","HDB2","HDB3","HDB4","HDB5","HDB6","POB1","POB2","BRS1","TLMP","TLP2","SNPR","SNPG","SNPF","GREN"];
 pub const SFXNAMES: [&str; NUMSFX] = ["","pistol","shotgn","sgcock","dshtgn","dbopn","dbcls","dbload","plasma","bfg","sawup","sawidl","sawful","sawhit","rlaunc","rxplod","firsht","firxpl","pstart","pstop","doropn","dorcls","stnmov","swtchn","swtchx","plpain","dmpain","popain","vipain","mnpain","pepain","slop","itemup","wpnup","oof","telept","posit1","posit2","posit3","bgsit1","bgsit2","sgtsit","cacsit","brssit","cybsit","spisit","bspsit","kntsit","vilsit","mansit","pesit","sklatk","sgtatk","skepch","vilatk","claw","skeswg","pldeth","pdiehi","podth1","podth2","podth3","bgdth1","bgdth2","sgtdth","cacdth","skldth","brsdth","cybdth","spidth","bspdth","vildth","kntdth","pedth","skedth","posact","bgact","dmact","bspact","bspwlk","vilact","noway","barexp","punch","hoof","metal","chgun","tink","bdopn","bdcls","itmbk","flame","flamst","getpow","bospit","boscub","bossit","bospn","bosdth","manatk","mandth","sssit","ssdth","keenpn","keendt","skeact","skesit","skeatk","radio"];
 pub const SFXPRIORITY: [i32; NUMSFX] = [0,64,64,64,64,64,64,64,64,64,64,118,64,64,64,70,70,70,100,100,100,100,119,78,78,96,96,96,96,96,96,78,78,78,96,32,98,98,98,98,98,98,98,94,92,90,90,90,90,90,90,70,70,70,70,70,70,32,32,70,70,70,70,70,70,70,70,32,32,32,32,32,32,32,32,120,120,120,100,100,100,78,60,64,70,70,64,60,100,100,100,32,32,60,70,70,70,70,70,70,70,70,70,70,70,70,70,70,60];
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum ActionGen { None, Light0, WeaponReady, Lower, Raise, Punch, ReFire, FirePistol, Light1, FireShotgun, Light2, FireShotgun2, CheckReload, OpenShotgun2, LoadShotgun2, CloseShotgun2, FireCGun, GunFlash, FireMissile, Saw, FirePlasma, BFGsound, FireBFG, BFGSpray, Explode, Pain, PlayerScream, Fall, XScream, Look, Chase, FaceTarget, PosAttack, Scream, SPosAttack, VileChase, VileStart, VileTarget, VileAttack, StartFire, Fire, FireCrackle, Tracer, SkelWhoosh, SkelFist, SkelMissile, FatRaise, FatAttack1, FatAttack2, FatAttack3, BossDeath, CPosAttack, CPosRefire, TroopAttack, SargAttack, HeadAttack, BruisAttack, SkullAttack, Metal, SpidRefire, BabyMetal, BspiAttack, Hoof, CyberAttack, PainAttack, PainDie, KeenDie, BrainPain, BrainScream, BrainDie, BrainAwake, BrainSpit, SpawnSound, SpawnFly, BrainExplode }
+pub enum ActionGen { None, Light0, WeaponReady, Lower, Raise, Punch, ReFire, FirePistol, Light1, FireShotgun, Light2, FireShotgun2, CheckReload, OpenShotgun2, LoadShotgun2, CloseShotgun2, FireCGun, GunFlash, FireMissile, Saw, FirePlasma, BFGsound, FireBFG, BFGSpray, Explode, Pain, PlayerScream, Fall, XScream, Look, Chase, FaceTarget, PosAttack, Scream, SPosAttack, VileChase, VileStart, VileTarget, VileAttack, StartFire, Fire, FireCrackle, Tracer, SkelWhoosh, SkelFist, SkelMissile, FatRaise, FatAttack1, FatAttack2, FatAttack3, BossDeath, CPosAttack, CPosRefire, TroopAttack, SargAttack, HeadAttack, BruisAttack, SkullAttack, Metal, SpidRefire, BabyMetal, BspiAttack, Hoof, CyberAttack, PainAttack, PainDie, KeenDie, BrainPain, BrainScream, BrainDie, BrainAwake, BrainSpit, SpawnSound, SpawnFly, BrainExplode, FireSniper }
 pub static STATES: [State; NUMSTATES] = [
 State{sprite:0,frame:0,tics:-1,action:ActionGen::None,next:0,misc1:0,misc2:0},
 State{sprite:1,frame:4,tics:0,action:ActionGen::Light0,next:0,misc1:0,misc2:0},
@@ -985,6 +985,22 @@ State{sprite:137,frame:32768,tics:4,action:ActionGen::None,next:964,misc1:0,misc
 State{sprite:137,frame:32769,tics:4,action:ActionGen::None,next:965,misc1:0,misc2:0},
 State{sprite:137,frame:32770,tics:4,action:ActionGen::None,next:966,misc1:0,misc2:0},
 State{sprite:137,frame:32771,tics:4,action:ActionGen::None,next:963,misc1:0,misc2:0},
+State{sprite:57,frame:0,tics:-1,action:ActionGen::None,next:967,misc1:0,misc2:0},
+State{sprite:57,frame:0,tics:-1,action:ActionGen::None,next:968,misc1:0,misc2:0},
+State{sprite:28,frame:0,tics:-1,action:ActionGen::None,next:969,misc1:0,misc2:0},
+State{sprite:28,frame:1,tics:-1,action:ActionGen::None,next:970,misc1:0,misc2:0},
+State{sprite:57,frame:0,tics:-1,action:ActionGen::None,next:971,misc1:0,misc2:0},
+State{sprite:138,frame:0,tics:-1,action:ActionGen::None,next:972,misc1:0,misc2:0},
+State{sprite:141,frame:0,tics:-1,action:ActionGen::None,next:973,misc1:0,misc2:0},
+State{sprite:141,frame:0,tics:-1,action:ActionGen::None,next:974,misc1:0,misc2:0},
+State{sprite:139,frame:0,tics:1,action:ActionGen::WeaponReady,next:975,misc1:0,misc2:0},
+State{sprite:139,frame:0,tics:1,action:ActionGen::Lower,next:976,misc1:0,misc2:0},
+State{sprite:139,frame:0,tics:1,action:ActionGen::Raise,next:977,misc1:0,misc2:0},
+State{sprite:139,frame:1,tics:4,action:ActionGen::FireSniper,next:979,misc1:0,misc2:0},
+State{sprite:139,frame:2,tics:23,action:ActionGen::None,next:980,misc1:0,misc2:0},
+State{sprite:139,frame:3,tics:23,action:ActionGen::None,next:981,misc1:0,misc2:0},
+State{sprite:139,frame:0,tics:5,action:ActionGen::ReFire,next:975,misc1:0,misc2:0},
+State{sprite:140,frame:32768,tics:4,action:ActionGen::Light1,next:1,misc1:0,misc2:0},
 ];
 pub static MOBJINFO: [MobjInfo; NUMMOBJTYPES] = [
 MobjInfo{doomednum:-1,spawnstate:149,spawnhealth:100,seestate:150,seesound:0,reactiontime:0,attacksound:0,painstate:156,painchance:255,painsound:25,meleestate:0,missilestate:154,deathstate:158,xdeathstate:165,deathsound:57,speed:0,radius:1048576,height:3670016,mass:100,damage:0,activesound:0,flags:33557510,raisestate:0},
@@ -1124,6 +1140,13 @@ MobjInfo{doomednum:78,spawnstate:955,spawnhealth:1000,seestate:0,seesound:0,reac
 MobjInfo{doomednum:79,spawnstate:956,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:1048576,mass:100,damage:0,activesound:0,flags:16,raisestate:0},
 MobjInfo{doomednum:80,spawnstate:957,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:1048576,mass:100,damage:0,activesound:0,flags:16,raisestate:0},
 MobjInfo{doomednum:81,spawnstate:958,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:1048576,mass:100,damage:0,activesound:0,flags:16,raisestate:0},
+MobjInfo{doomednum:9020,spawnstate:967,spawnhealth:25,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:2621440,mass:100,damage:0,activesound:0,flags:524294,raisestate:0},
+MobjInfo{doomednum:-1,spawnstate:968,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:4194304,height:4194304,mass:100,damage:0,activesound:0,flags:4624,raisestate:0},
+MobjInfo{doomednum:-1,spawnstate:969,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1048576,height:3670016,mass:100,damage:0,activesound:0,flags:4624,raisestate:0},
+MobjInfo{doomednum:9040,spawnstate:971,spawnhealth:400,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:2097152,height:3145728,mass:1000,damage:0,activesound:0,flags:524294,raisestate:0},
+MobjInfo{doomednum:9050,spawnstate:972,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:1048576,mass:100,damage:0,activesound:0,flags:1,raisestate:0},
+MobjInfo{doomednum:-1,spawnstate:973,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:262144,height:524288,mass:100,damage:0,activesound:0,flags:1040,raisestate:0},
+MobjInfo{doomednum:9051,spawnstate:974,spawnhealth:1000,seestate:0,seesound:0,reactiontime:8,attacksound:0,painstate:0,painchance:0,painsound:0,meleestate:0,missilestate:0,deathstate:0,xdeathstate:0,deathsound:0,speed:0,radius:1310720,height:1048576,mass:100,damage:0,activesound:0,flags:1,raisestate:0},
 ];
 #[allow(dead_code)]
 pub mod spr {
@@ -1265,6 +1288,10 @@ pub const POB2: usize = 134;
 pub const BRS1: usize = 135;
 pub const TLMP: usize = 136;
 pub const TLP2: usize = 137;
+pub const SNPR: usize = 138;
+pub const SNPG: usize = 139;
+pub const SNPF: usize = 140;
+pub const GREN: usize = 141;
 }
 #[allow(dead_code)]
 pub mod st {
@@ -2235,6 +2262,22 @@ pub const TECH2LAMP: usize = 963;
 pub const TECH2LAMP2: usize = 964;
 pub const TECH2LAMP3: usize = 965;
 pub const TECH2LAMP4: usize = 966;
+pub const CRATE: usize = 967;
+pub const DROPSHIP: usize = 968;
+pub const PARA_FALL: usize = 969;
+pub const PARA_OPEN: usize = 970;
+pub const BUGGY: usize = 971;
+pub const SNIPERRIFLE: usize = 972;
+pub const GRENADE: usize = 973;
+pub const GRENADEPACK: usize = 974;
+pub const SNIPER: usize = 975;
+pub const SNIPERDOWN: usize = 976;
+pub const SNIPERUP: usize = 977;
+pub const SNIPER1: usize = 978;
+pub const SNIPER2: usize = 979;
+pub const SNIPER3: usize = 980;
+pub const SNIPER4: usize = 981;
+pub const SNIPERFLASH: usize = 982;
 }
 #[allow(dead_code)]
 pub mod mt {
@@ -2375,6 +2418,13 @@ pub const MISC83: usize = 133;
 pub const MISC84: usize = 134;
 pub const MISC85: usize = 135;
 pub const MISC86: usize = 136;
+pub const CRATE: usize = 137;
+pub const DROPSHIP: usize = 138;
+pub const PARACHUTER: usize = 139;
+pub const BUGGY: usize = 140;
+pub const SNIPERRIFLE: usize = 141;
+pub const GRENADE: usize = 142;
+pub const GRENADEPACK: usize = 143;
 }
 #[allow(dead_code)]
 pub mod sfx {

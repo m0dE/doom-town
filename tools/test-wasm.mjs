@@ -75,7 +75,7 @@ console.log(`map_load ${MAP}: id ${mapId} in ${(performance.now() - t0).toFixed(
 const sprites = names(ex.sim_sprite_names()), sounds = names(ex.sim_sound_names())
 const tex = names(ex.world_map_texture_names(mapId)), flats = names(ex.world_map_flat_names(mapId))
 console.log(`sprites ${sprites.length} (${sprites.slice(0, 4).join(',')}…) sounds ${sounds.length} textures ${tex.length} flats ${flats.length}`)
-check(sprites.length === 138 && sounds.length === 109 && tex[0] === '-', 'name tables')
+check(sprites.length === 142 && sprites[138] === 'SNPR' && sprites[141] === 'GREN' && sounds.length === 109 && tex[0] === '-', 'name tables')
 
 const h = ex.world_new(mapId, 1234, SLOTS)
 check(h > 0, 'world_new')
@@ -216,5 +216,43 @@ const wv = matchView(hw)
 console.log(`WAR 200 bots on ${warName}: ${(wms / WT).toFixed(3)} ms/tic over ${WT} tics; ${JSON.stringify(wv)}`)
 check(wv.points > 0, 'war has capture points')
 ex.world_free(hw)
+
+// Battle royale on the BR01 mod (public/mods/br01.wad: map + MODINFO + art; map_load
+// ignores the extra lumps): a whole match with 64 bots, per-tic cost
+try {
+  const bb = readFileSync(join(root, 'public', 'mods', 'br01.wad'))
+  const bp = pass(bb)
+  const brMap = ex.map_load(bp, bb.length)
+  ex.dealloc(bp, bb.length)
+  check(brMap >= 0, `BR01 map_load ${brMap}`)
+  const hbr = newCfg([2, 4, 64, 0, 0, 0, 0, 0, 0, 0, 1, brMap, 7])
+  const ms = []
+  let shipEnd = -1, end = -1
+  for (let t = 0; t < 35 * 900 && end < 0; t++) {
+    const ph = new Int32Array(ex.memory.buffer, ex.world_view_match(hbr), 2)[1]
+    // a slow tic is re-timed on two copies taken before it (min of 3): on a shared machine
+    // the scheduler's pauses would otherwise be counted as the sim's
+    const c1 = ex.world_clone(hbr), c2 = ex.world_clone(hbr)
+    const t0 = performance.now()
+    ex.world_tick(hbr)
+    let dt = performance.now() - t0
+    if (dt > 1) for (const c of [c1, c2]) { const t1 = performance.now(); ex.world_tick(c); dt = Math.min(dt, performance.now() - t1) }
+    ex.world_free(c1); ex.world_free(c2)
+    ms.push(dt)
+    const m = ex.world_view_match(hbr)
+    const v = i32(m, 13 + 5 + 19)
+    if (ph === 5 && v[1] === 0) shipEnd = v[13 + 5 + 9]
+    const ep = ex.world_events(hbr)
+    const n = new Uint32Array(ex.memory.buffer, ep, 1)[0]
+    const ev = i32(ep + 4, n * 8)
+    for (let k = 0; k < n; k++) if (ev[k * 8] === 8) end = t
+  }
+  const s = ms.slice().sort((a, b) => a - b)
+  console.log(`BR 64 bots on BR01: ${ms.length} tics, avg ${(ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(3)} ms, p99 ${s[Math.floor(s.length * 0.99)].toFixed(3)} ms, max ${s[s.length - 1].toFixed(3)} ms; alive when the ship left ${shipEnd}; match ended at tic ${end}`)
+  check(end > 0 && shipEnd >= 45, 'BR01 match runs to a winner, the drop spreads out')
+  ex.world_free(hbr)
+} catch (e) {
+  if (e.code === 'ENOENT') console.log('public/mods/br01.wad not built: BR skipped'); else throw e
+}
 if (failures) { console.error(`${failures} failure(s)`); process.exit(1) }
 console.log('OK')

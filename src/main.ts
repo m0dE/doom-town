@@ -27,6 +27,7 @@ import { homeRegion, regionNodeUrl, regionRoomName } from './menu/regions.js';
 import { MODES, MODE_ORDER, gameFor, roomNameFor, type CfgOverrides, type ModeKey } from './menu/modes.js';
 import { indieProgress, startIndie } from './platform/indie.js';
 import type { Game } from './game/game.js';
+import { initTouchMode } from './input/touch.js';
 
 declare const __BUILD_REV__: string;
 
@@ -57,6 +58,9 @@ const rev = typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev';
 $('build').textContent = `build ${rev}`;
 
 // The indie.fun SDK, in that export only (src/platform/indie.ts).
+// Phones and tablets: html.touch-mode (the Controls dialog, bigger tap targets), the controls in a match.
+initTouchMode();
+
 startIndie();
 indieProgress('menu');
 
@@ -196,7 +200,8 @@ $<HTMLFormElement>('create-form').addEventListener('submit', (e) => {
 });
 
 const controls = $<HTMLDialogElement>('controls');
-$('controls-btn').addEventListener('click', () => controls.showModal());
+// opened at the top (showModal focuses the Close button at the bottom, which scrolls a long dialog)
+$('controls-btn').addEventListener('click', () => { controls.showModal(); controls.scrollTop = 0; });
 
 // ------------------------------------------------------------------ mods
 
@@ -243,10 +248,11 @@ function showMenu(): void {
   browser.start();
 }
 
-/** Offline only (tests, playtesting): ?lobby= ?match= ?inter= in seconds shorten the match's phases. */
+/** Offline only (tests, playtesting): ?lobby= ?match= ?inter= in seconds shorten the match's phases; ?slots= plays with fewer marines. */
 function testOverrides(): CfgOverrides | undefined {
   const sec = (k: string): number | undefined => { const v = Number(params.get(k)); return params.has(k) && Number.isFinite(v) && v > 0 ? Math.round(v * 35) : undefined; };
-  const o: CfgOverrides = { lobbyTics: sec('lobby'), matchTics: sec('match'), interTics: sec('inter') };
+  const n = Number(params.get('slots'));
+  const o: CfgOverrides = { lobbyTics: sec('lobby'), matchTics: sec('match'), interTics: sec('inter'), slots: params.has('slots') && Number.isInteger(n) && n >= 2 ? n : undefined };
   return Object.values(o).some((v) => v !== undefined) ? o : undefined;
 }
 
@@ -281,7 +287,7 @@ async function play(room: string, offline: boolean): Promise<void> {
     const keep = new URLSearchParams({ room });
     if (offline) keep.set('offline', '1');
     if (offline && modSource) keep.set('mod', modSource);
-    for (const k of ['central', 'nodeUrl', 'via', ...(offline ? ['lobby', 'match', 'inter'] as const : [])] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }
+    for (const k of ['central', 'nodeUrl', 'via', ...(offline ? ['lobby', 'match', 'inter', 'slots'] as const : [])] as const) { const v = params.get(k); if (v !== null) keep.set(k, v); }
     history.replaceState(null, '', `${location.pathname}?${keep}`);
     loading.classList.add('hidden');
     if (!offline) indieProgress('match_joined');

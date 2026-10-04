@@ -95,3 +95,56 @@
 .h-lobby .plist > div { display: flex; align-items: center; gap: calc(var(--k) * 2px); overflow: hidden; }
 .h-lobby .plist i { width: calc(var(--k) * 3px); height: calc(var(--k) * 3px); flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
 .h-lobby .tips { display: flex; flex-direction: column; gap: calc(var(--k) * 1px); border-top: 1px solid rgba(255,255,255,.1); padding-top: calc(var(--k) * 2px); }
+
+/* ------------------------------------------------------------------ touch (DESIGN.md "Mobile") */
+/* inside the notch and the home indicator; the top bar of buttons (src/input/touch.css) sits top left */
+#hud.touch { inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); --tbar: calc(max(44px, var(--k) * 23px) + 14px); }
+#hud.touch .h-msgs { top: var(--tbar); max-width: 50vw; }
+#hud.touch .h-lobby { top: calc(var(--tbar) + var(--k) * 12px); max-height: calc(100% - var(--tbar) - var(--k) * 14px); overflow: hidden; }
+/* the minimap is a button (top bar) that opens the large map */
+#hud.touch .h-map:not(.big) { display: none; }
+#hud.touch.with-map .h-feed { top: calc(var(--k) * 16px); }
+#hud.touch .h-feed { max-width: 38vw; }
+/* the minimal HUD between the thumbs */
+#hud.touch .h-full { justify-content: center; gap: calc(var(--k) * 16px); bottom: calc(var(--k) * 3px); }
+/* the chat line at the top, clear of the on-screen keyboard */
+#hud.touch .h-chat { top: var(--tbar); bottom: auto; }
+#hud.touch .h-chat input { width: min(70vw, 520px); font-size: 16px; min-height: 44px; }
+#hud.touch .h-scores { max-height: calc(100% - 16px); overflow: hidden; }
+#hud.touch .h-map.big { max-width: 92vw; }
+
+/* in a match: no page zoom, pull-to-refresh, long-press menus or selection */
+html.in-game, html.in-game body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+html.in-game #view, html.in-game #view canvas { touch-action: none; }
+html.in-game .pause { touch-action: pan-y; }
+
+/* Esc menu: a phone or a short window */
+.pause .box { max-height: calc(100dvh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.pause .touch-only { display: none; }
+html.touch-mode .pause .touch-only { display: grid; }
+html.touch-mode .pause .opt:has([data-k="sensitivity"]) { display: none; }
+@media (max-width: 480px), (max-height: 480px) {
+  .pause .box { padding: 16px 18px 14px; }
+  .pause .skull { margin-bottom: 8px; }
+  .pause .skull canvas { height: 28px; }
+  .pause .opts { margin: 0 0 10px; padding: 6px 0; }
+  .pause .opt { grid-template-columns: 1fr minmax(96px, 140px) 40px; margin: 2px 0; font-size: 13px; }
+  .pause .btn.primary { padding: 14px 20px; font-size: 16px; }
+  .pause .btn.ghost { padding: 12px 18px; }
+}
+@media (max-height: 480px) and (min-width: 600px) {
+  /* landscape phone: options and buttons side by side */
+  .pause .box { width: min(720px, calc(100vw - 24px)); display: grid; grid-template-columns: 1fr 200px; grid-template-rows: auto 1fr; column-gap: 20px; }
+  .pause .skull { grid-column: 1 / -1; }
+  .pause .opts { margin: 0; border-bottom: 0; }
+  .pause .buttons { justify-content: center; }
+}
+@media (pointer: coarse) {
+  .pause .opt { min-height: 44px; }
+  .pause .opt input[type=checkbox] { width: 24px; height: 24px; }
+  .pause .opt input[type=range] { height: 32px; }
+  .pause .seg button { min-height: 40px; padding: 6px 12px; }
+  .pause .btn { min-height: 48px; }
+}
+/* touch: the zone line under the top row (a phone is too narrow for both on one line) */
+#hud.touch .h-zone { top: calc(var(--k) * 14px); }

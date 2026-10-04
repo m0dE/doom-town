@@ -12,13 +12,25 @@ export interface Prefs {
   hud: 'bar' | 'full';
   /** How other players are drawn: '3d' = the box marine model, 'sprites' = Doom's sprites. */
   players: '3d' | 'sprites';
+  /** Touch: look speed of a drag (1 = default), and the controls mirrored for the left thumb. */
+  touchLook: number;
+  leftHanded: boolean;
+  /** Graphics quality (src/render/quality.ts): 'auto' guesses from the device and adapts the render scale. */
+  quality: 'auto' | 'high' | 'medium' | 'low';
+  /** A frame-rate counter over the view. */
+  showFps: boolean;
 }
+
+/** A phone or tablet (primary pointer coarse): the minimal HUD by default, the bar would sit under the thumbs. */
+const coarse = (): boolean => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } };
 
 const KEY = 'freedm.prefs';
 
 const defaults = (): Prefs => ({
   name: `marine${Math.floor(Math.random() * 900 + 100)}`,
-  color: 0, sensitivity: 5, invertY: false, volume: 0.8, fov: 90, hud: 'bar', players: '3d',
+  color: 0, sensitivity: 5, invertY: false, volume: 0.6, fov: 90, hud: coarse() ? 'full' : 'bar', players: '3d',
+  touchLook: 1, leftHanded: false,
+  quality: 'auto', showFps: false,
 });
 
 let cached: Prefs | null = null;
@@ -36,8 +48,12 @@ export function prefs(): Prefs {
         invertY: raw.invertY === true,
         volume: num(raw.volume, 0, 1, d.volume),
         fov: num(raw.fov, 75, 110, d.fov),
-        hud: raw.hud === 'full' ? 'full' : 'bar',
+        hud: raw.hud === 'full' || raw.hud === 'bar' ? raw.hud : d.hud,
         players: raw.players === 'sprites' ? 'sprites' : '3d',
+        touchLook: num(raw.touchLook, 0.2, 3, d.touchLook),
+        leftHanded: raw.leftHanded === true,
+        quality: raw.quality === 'high' || raw.quality === 'medium' || raw.quality === 'low' ? raw.quality : 'auto',
+        showFps: raw.showFps === true,
       };
       return cached;
     }

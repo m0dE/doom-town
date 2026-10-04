@@ -60,6 +60,8 @@ export class SmokeColumns {
   private readonly attrs: THREE.InstancedBufferAttribute[];
   private readonly u: Record<string, THREE.IUniform>;
   private n = 0;
+  /** graphics quality low: half the puffs, a little larger and denser */
+  lowFx = false;
 
   constructor(scene: THREE.Scene, world: Record<string, THREE.IUniform>) {
     this.geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
@@ -90,7 +92,8 @@ export class SmokeColumns {
 
   /** A column rising from (x, y, z) (the crate's top). */
   column(id: number, x: number, y: number, z: number, time: number): void {
-    for (let i = 0; i < PER && this.n < CAP; i++) {
+    const step = this.lowFx ? 2 : 1, grow = this.lowFx ? 1.2 : 1, dense = this.lowFx ? 1.35 : 1;
+    for (let i = 0; i < PER && this.n < CAP; i += step) {
       const seed = (Math.sin(id * 12.9898 + i * 78.233) * 43758.5453) % 1;
       const s = Math.abs(seed);
       const t = ((time / LIFE + i / PER + s * 0.02) % 1 + 1) % 1;
@@ -100,8 +103,8 @@ export class SmokeColumns {
       const wob = Math.sin(time * 0.7 + i * 1.7) * (8 + h * 0.05);
       const o = this.n++ * 4;
       this.pos[o] = x + drift * 0.8 + wob; this.pos[o + 1] = y + drift * 0.45 + Math.cos(i * 2.3 + time * 0.5) * (6 + h * 0.04); this.pos[o + 2] = z + 8 + h;
-      this.pos[o + 3] = 22 + t * 110;
-      this.info[o] = Math.min(1, t * 14) * (1 - t) * 0.6;
+      this.pos[o + 3] = (22 + t * 110) * grow;
+      this.info[o] = Math.min(1, t * 14) * (1 - t) * 0.6 * dense;
       this.info[o + 1] = Math.max(0, 1 - t * 7);
       this.info[o + 2] = s;
     }

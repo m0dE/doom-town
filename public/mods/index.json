@@ -5,9 +5,9 @@
     "author": "Doom Town",
     "mode": "battle-royale",
     "map": "BR01",
-    "slots": 64,
-    "bytes": 2314909,
-    "description": "64 marines, one island, one survivor."
+    "slots": 100,
+    "bytes": 2413427,
+    "description": "100 marines, one island, one survivor."
   },
   {
     "id": "arena",
@@ -35,8 +35,8 @@
     "author": "Doom Town examples",
     "mode": "battle-royale",
     "map": "BR01",
-    "slots": 64,
-    "bytes": 2314851,
+    "slots": 100,
+    "bytes": 2413368,
     "description": "Doom Town with crates full of sniper rifles and a storm that closes in under four minutes. The modding guide's third example."
   }
 ]

@@ -36,6 +36,8 @@ export class LightManager {
   posVec: THREE.Vector4[] = [];
   colVec: THREE.Vector4[] = [];
   count = 0;
+  /** lights kept per frame (graphics quality), ≤ MAX_LIGHTS */
+  maxLights = MAX_LIGHTS;
   readonly reachTex: THREE.DataTexture;
   readonly tileTex: THREE.DataTexture;
   private reach: Uint8Array;
@@ -114,16 +116,18 @@ export class LightManager {
         this.score[i] = Math.sqrt(dx * dx + dy * dy + dz * dz) - this.cr[i];
         this.order[m++] = i;
       }
+      const cap = Math.max(0, Math.min(MAX_LIGHTS, this.maxLights | 0));
       for (let a = 1; a < m; a++) {
         const v = this.order[a], s = this.score[v];
         let b = a - 1;
-        if (b >= MAX_LIGHTS && s >= this.score[this.order[MAX_LIGHTS - 1]]) continue;
+        if (cap > 0 && b >= cap && s >= this.score[this.order[cap - 1]]) continue;
         while (b >= 0 && this.score[this.order[b]] > s) { this.order[b + 1] = this.order[b]; b--; }
         this.order[b + 1] = v;
       }
     }
-    const count = Math.min(m, MAX_LIGHTS);
-    this.reach.fill(0);
+    const count = Math.min(m, MAX_LIGHTS, Math.max(0, this.maxLights | 0));
+    // only the rows used last frame or this one need clearing
+    this.reach.fill(0, 0, Math.max(count, this.count) * this.nsec);
     this.tiles.fill(0);
     const T = TILES_X * TILES_Y;
     for (let k = 0; k < count; k++) {

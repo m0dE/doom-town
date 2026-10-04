@@ -40,11 +40,20 @@ export interface RendererOptions {
   clientLightSpecials?: boolean;
   /** film grain amount (0 = off) */
   grain?: number;
+  /** bloom at half resolution (graphics quality medium) */
+  bloomHalf?: boolean;
+  /** dynamic lights kept per frame, the nearest visible ones (≤ MAX_LIGHTS) */
+  maxLights?: number;
+  /** cheaper effect paths (graphics quality low): storm, smoke, sky dome; no grain, no contact darkening */
+  lowFx?: boolean;
+  /** player bodies further than this are drawn as sprites by the renderer, not the body hook */
+  bodyLod?: number;
 }
 
 const DEFAULTS: Required<RendererOptions> = {
   pixelAspect: 1.2, fov: 90, resolutionScale: 1, maxPixelRatio: 1.5, bloom: true, bloomStrength: 0.9,
   dynamicLights: true, lightIntensity: 1.6, ao: 1, clientLightSpecials: true, grain: 0.012,
+  bloomHalf: false, maxLights: MAX_LIGHTS, lowFx: false, bodyLod: Infinity,
 };
 
 const TAU = Math.PI * 2;
@@ -101,7 +110,7 @@ export class Renderer {
   readonly camera = new THREE.PerspectiveCamera(60, 1, 2, 65536);
   readonly options: Required<RendererOptions>;
   /** frame statistics (for debug overlays) */
-  readonly stats = { sprites: 0, lights: 0, calls: 0, triangles: 0 };
+  readonly stats = { sprites: 0, lights: 0, calls: 0, triangles: 0, width: 0, height: 0 };
 
   private frame: RenderFrame | null = null;
   private post = new PostFX();
@@ -142,6 +151,8 @@ export class Renderer {
   private startTime = performance.now();
   private lastW = 0;
   private lastH = 0;
+  /** player bodies drawn as sprites for now (beyond the body LOD distance, with hysteresis) */
+  private farBodies = new Set<number>();
 
   constructor(canvas: HTMLCanvasElement, wadData: Uint8Array | ArrayBuffer | Wad, mapName: string, options: RendererOptions = {}) {
     this.options = { ...DEFAULTS, ...options };
@@ -193,6 +204,7 @@ export class Renderer {
       uSkyTex: { value: this.assets.skyTexId }, uSkyTop: { value: this.skyTopColor() }, uSkyBottom: { value: this.skyTopColor(true) }, uSkyStretch: { value: 160 }, // Doom: 1 sky texel per row of a 320x200 view (160 rows per unit tan)
       uSpriteAtlas: { value: this.assets.spriteAtlas }, uTrans: { value: this.assets.transTex },
       uPspLevel: { value: 0 }, uPspLight: { value: new THREE.Vector3() }, uPspGlow: { value: 0.2 },
+      uLowFx: { value: 0 },
     };
     const mat = (vs: string, fs: string, extra: Partial<THREE.ShaderMaterialParameters> = {}, own: Record<string, THREE.IUniform> = {}) =>
       new THREE.RawShaderMaterial({ vertexShader: vs, fragmentShader: fs, glslVersion: THREE.GLSL3, uniforms: { ...this.u, ...own }, ...extra });
@@ -388,7 +400,7 @@ export class Renderer {
         continue;
       }
       if (m.slot >= 0 && m.sprite === SPR_PLAY && m.pose === undefined) m = this.royale.seat(m);
-      if (useBodies && m.sprite === SPR_PLAY) {
+      if (useBodies && m.sprite === SPR_PLAY && !this.farBody(m, cam.x, cam.y)) {
         this.bodies[nb++] = m;
         continue;
       }
@@ -470,11 +482,16 @@ export class Renderer {
   private applyOptions(): void {
     const o = this.options;
     this.post.bloom = o.bloom;
+    this.post.bloomHalf = o.bloomHalf;
     this.post.bloomStrength = o.bloomStrength;
-    this.post.composite.uniforms.uGrain.value = o.grain;
+    this.post.composite.uniforms.uGrain.value = o.lowFx ? 0 : o.grain;
+    this.lights.maxLights = o.maxLights;
+    this.royale?.setLowFx(o.lowFx);
+    if (!Number.isFinite(o.bodyLod)) this.farBodies.clear();
     if (this.u) {
-      this.u.uAoStrength.value = o.ao;
+      this.u.uAoStrength.value = o.lowFx ? 0 : o.ao;
       this.u.uDynScale.value = o.dynamicLights ? o.lightIntensity : 0;
+      this.u.uLowFx.value = o.lowFx ? 1 : 0;
     }
     this.lastW = 0; // force projection update
   }
@@ -490,7 +507,24 @@ export class Renderer {
     this.gl.setSize(w, h, false);
     this.post.setSize(w, h);
     this.u.uViewport.value.set(w, h);
+    this.stats.width = w; this.stats.height = h;
     this.updateProjection();
+  }
+
+  /**
+   * A player body beyond the body LOD distance goes to the sprite batch (one instanced
+   * draw) instead of a posed 3D model; ±10 % hysteresis so one walking along the line
+   * does not flip between the two.
+   */
+  private farBody(m: RenderMobj, vx: number, vy: number): boolean {
+    const lod = this.options.bodyLod;
+    if (!Number.isFinite(lod)) return false;
+    const dx = m.x - vx, dy = m.y - vy, d2 = dx * dx + dy * dy;
+    const far = this.farBodies.has(m.id);
+    if (!far && d2 > lod * lod * 1.21) { this.farBodies.add(m.id); return true; }
+    if (far && d2 < lod * lod * 0.81) { this.farBodies.delete(m.id); return false; }
+    if (this.farBodies.size > 1024) this.farBodies.clear();
+    return far;
   }
 
   /** The camera's projection from the field of view (the zoom's when one is set) and the size. */

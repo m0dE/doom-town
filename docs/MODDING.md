@@ -116,7 +116,7 @@ name, exactly like Doom loads a PWAD.
   "title": "Doom Town Royale",
   "author": "Doom Town",
   "license": "BSD-3-Clause",
-  "description": "64 marines, one island, one survivor.",
+  "description": "100 marines, one island, one survivor.",
   "mode": "battle-royale",
   "map": "BR01",
   "slots": 64,
@@ -271,7 +271,7 @@ door opens for anyone) are not spawned. `mod:check` warns if you place them.
 |---|---|
 | deathmatch, team deathmatch, elimination | 4+ deathmatch starts (8+ recommended) |
 | war | red (9000) and blue (9001) team starts, 1–8 capture points (9010) |
-| battle royale | deathmatch starts spread over the map (64 is ideal), crates (9020), lobby spots (9030) on a sealed-off island; buggies optional |
+| battle royale | deathmatch starts spread over the map (64+; the sim adds generated spots for bigger rooms), crates (9020), lobby spots (9030) on a sealed-off island; buggies optional |
 
 ## Textures, flats and licences
 
@@ -709,7 +709,7 @@ export { build, report, NAME, TITLE } from '../../br01/map.mts';
   "format": 1, "id": "snipers", "title": "Snipers Only Royale",
   "author": "Doom Town examples", "license": "BSD-3-Clause",
   "description": "Doom Town with crates full of sniper rifles and a storm that closes in under four minutes.",
-  "mode": "battle-royale", "map": "BR01", "slots": 64,
+  "mode": "battle-royale", "map": "BR01", "slots": 100,
   "rules": {
     "matchSeconds": 420, "lobbySeconds": 30, "startBullets": 40,
     "vehicles": true, "supplyDrops": true,

@@ -225,3 +225,67 @@ input#name:focus { border-color: var(--ember); background: rgba(0, 0, 0, .45); }
 .badge.mod { display: inline-block; margin-left: 6px; padding: 2px 6px; border-radius: 3px; font: 800 10px/1 var(--display); letter-spacing: .12em;
   color: #10240c; background: linear-gradient(#9cff6a, #4fb52c); border: 1px solid #c8ff9a; vertical-align: middle; }
 .srv-map .by { color: var(--muted); font-size: 11px; }
+
+/* ------------------------------------------------------------------ phones and tablets (DESIGN.md "Mobile") */
+#menu { padding-left: max(clamp(16px, 4vw, 72px), env(safe-area-inset-left)); padding-right: max(clamp(16px, 4vw, 72px), env(safe-area-inset-right));
+  padding-bottom: env(safe-area-inset-bottom); overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+.dialog { max-height: calc(100dvh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.dialog h3 { margin: 18px 0 10px; font: 800 13px/1 var(--display); letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+/* the Controls dialog: the touch layout first on a touch device */
+.touch-keys { display: none; }
+html.touch-mode .touch-keys { display: block; }
+.touch-keys .keys { margin-bottom: 4px; }
+.touch-diagram { position: relative; aspect-ratio: 2.16; margin: 0 0 16px; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(rgba(70, 40, 30, .5), rgba(20, 12, 10, .7)); border: 2px solid rgba(255, 200, 150, .25);
+  font: 800 10px/1 var(--display); letter-spacing: .1em; color: rgba(255, 244, 228, .85); }
+.touch-diagram span { position: absolute; display: grid; place-items: center; }
+.td-top { left: 3%; top: 6%; display: flex !important; gap: 4px; }
+.td-top i { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid rgba(255, 200, 150, .5); }
+.td-stick { left: 10%; top: 42%; width: 22%; aspect-ratio: 1; border-radius: 50%; border: 2px solid rgba(255, 220, 180, .35); }
+.td-stick i { width: 45%; aspect-ratio: 1; border-radius: 50%; background: rgba(255, 230, 200, .5); }
+.td-look { left: 40%; top: 30%; width: 26%; height: 30%; border: 1.5px dashed rgba(255, 200, 150, .35); border-radius: 8px; font-weight: 600; color: var(--muted); }
+.td-btn { border-radius: 50%; border: 2px solid rgba(255, 200, 150, .45); background: rgba(14, 8, 6, .5); }
+.td-fire { right: 4%; bottom: 7%; width: 19%; aspect-ratio: 1; border-color: rgba(255, 110, 70, .7); background: rgba(150, 20, 8, .5); }
+.td-jump { right: 25%; bottom: 4%; width: 12%; aspect-ratio: 1; }
+.td-use { right: 23%; bottom: 31%; width: 11%; aspect-ratio: 1; }
+.td-weap { right: 3%; top: 22%; padding: 5px 10px; border-radius: 12px; border: 1.5px solid rgba(255, 200, 150, .35); }
+@media (pointer: coarse) {
+  /* tap targets of 44 px and more */
+  .btn.small, .account button, .mode-tabs button, .srv-join, .create-modes label, .panel-head .create { min-height: 44px; }
+  .srv-join { display: inline-grid; place-items: center; }
+  .mode-tabs button { padding: 8px 12px; }
+  .srv-row { min-height: 52px; }
+  .swatch { width: 36px; height: 36px; }
+  .swatches { max-width: 320px; gap: 8px; }
+  .foot a, .foot .link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px; }
+  .create-form .check { min-height: 44px; }
+  .create-form .check input { width: 22px; height: 22px; }
+  input#name { min-height: 48px; }
+}
+@media (max-width: 420px) {
+  #menu { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .dialog { width: calc(100vw - 20px); padding: 18px 16px; }
+  .create-modes { grid-template-columns: 1fr; }
+  .keys { grid-template-columns: minmax(0, 38%) 1fr; gap: 8px 12px; font-size: 14px; }
+  .panel-head { flex-wrap: wrap; padding: 12px 12px 8px; }
+  .mode-tabs { padding: 0 10px 10px; }
+  .srv-list { padding: 4px 4px 8px; }
+  .srv-cols { padding: 0 12px 6px; }
+  .srv-cols, .srv-row { grid-template-columns: minmax(0, 1fr) 88px 52px 58px; gap: 6px; }
+  .srv-mode { font-size: 11px; white-space: normal; }
+  .srv-pop { white-space: nowrap; font-size: 13px; }
+  .srv-join { padding: 6px 10px; }
+}
+/* landscape phone: the marine beside the name, a compact header */
+@media (max-height: 500px) and (orientation: landscape) {
+  .topbar { min-height: 70px; padding-top: 8px; }
+  .stage { width: min(30vh, 160px); }
+  .logo { margin-bottom: 10px; }
+  .actions { margin-bottom: 10px; }
+  .btn.primary { padding: 13px 28px; font-size: 17px; }
+}
+/* a tablet in landscape / a small laptop: two columns, the server list without the Up column */
+@media (min-width: 961px) and (max-width: 1220px) {
+  .srv-cols, .srv-row { grid-template-columns: minmax(60px, 1fr) 100px minmax(96px, 1.4fr) 72px 64px; gap: 8px; }
+  .srv-age, .srv-cols span:nth-child(5) { display: none; }
+}

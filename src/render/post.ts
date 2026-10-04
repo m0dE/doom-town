@@ -31,6 +31,9 @@ export class PostFX {
   private h = 0;
   bloomStrength = 0.9;
   bloom = true;
+  /** bloom at half resolution: the chain starts at a quarter of the scene, one level fewer */
+  bloomHalf = false;
+  private half = false;
 
   constructor() {
     this.scene = rt(1, 1, true);
@@ -50,10 +53,12 @@ export class PostFX {
   }
 
   setSize(w: number, h: number): void {
-    if (w === this.w && h === this.h) return;
+    if (w === this.w && h === this.h && this.half === this.bloomHalf) return;
     this.w = w; this.h = h;
+    this.half = this.bloomHalf;
     this.scene.setSize(w, h);
     let lw = w, lh = h;
+    if (this.half) { lw = Math.max(1, lw >> 1); lh = Math.max(1, lh >> 1); }
     for (let i = 0; i < LEVELS; i++) {
       lw = Math.max(1, lw >> 1); lh = Math.max(1, lh >> 1);
       this.down[i].setSize(lw, lh);
@@ -71,17 +76,22 @@ export class PostFX {
   finish(r: THREE.WebGLRenderer, time: number): void {
     const bloom = this.bloom && this.bloomStrength > 0;
     if (bloom) {
+      if (this.half !== this.bloomHalf) this.setSize(this.w, this.h);
+      // half: the four bilinear taps sit a texel further out, so they still cover the
+      // 4x4 scene pixels under each bloom texel (small emissive pixels do not flicker)
+      const k = this.half ? 2 : 1;
       this.extract.uniforms.uSrc.value = this.scene.texture;
-      this.extract.uniforms.uTexel.value.set(1 / this.w, 1 / this.h);
+      this.extract.uniforms.uTexel.value.set(k / this.w, k / this.h);
       this.run(r, this.extract, this.down[0]);
-      for (let i = 1; i < LEVELS; i++) {
+      const levels = this.half ? LEVELS - 1 : LEVELS;
+      for (let i = 1; i < levels; i++) {
         const src = this.down[i - 1];
         this.downM.uniforms.uSrc.value = src.texture;
         this.downM.uniforms.uTexel.value.set(1 / src.width, 1 / src.height);
         this.run(r, this.downM, this.down[i]);
       }
-      let src = this.down[LEVELS - 1];
-      for (let i = LEVELS - 2; i >= 0; i--) {
+      let src = this.down[levels - 1];
+      for (let i = levels - 2; i >= 0; i--) {
         this.upM.uniforms.uSrc.value = src.texture;
         this.upM.uniforms.uBase.value = this.down[i].texture;
         this.upM.uniforms.uTexel.value.set(0.5 / src.width, 0.5 / src.height);
@@ -91,7 +101,7 @@ export class PostFX {
       this.composite.uniforms.uBloom.value = this.up[0].texture;
     }
     this.composite.uniforms.uBloomStrength.value = bloom ? this.bloomStrength : 0;
-    this.composite.uniforms.uBloom.value ??= this.scene.texture;
+    if (!bloom) this.composite.uniforms.uBloom.value = this.scene.texture;
     this.composite.uniforms.uTime.value = time;
     this.run(r, this.composite, null);
   }

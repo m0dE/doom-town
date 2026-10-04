@@ -37,9 +37,14 @@ export interface PlayOptions {
   pitchJitter?: number;
 }
 
+/** The share of full scale one sound at full volume gets, before the limiter. */
+const HEADROOM = 0.45;
+
 export class SoundBank {
   readonly ctx: AudioContext;
+  /** Everything this bank plays goes through here (the volume setting, then the limiter). */
   readonly master: GainNode;
+  private readonly limiter: DynamicsCompressorNode;
   private buffers: (AudioBuffer | null)[] = [];
   private voices: Voice[] = [];
   private lx = 0;
@@ -51,9 +56,18 @@ export class SoundBank {
 
   constructor(wad: Wad, opts: { maxVoices?: number; context?: AudioContext } = {}) {
     this.ctx = opts.context ?? new AudioContext({ latencyHint: 'interactive' });
+    // Up to maxVoices sounds add up here: with 64 marines firing that summed far past full
+    // scale. The master leaves headroom and a limiter catches the crowd, so one shotgun
+    // still sounds like a shotgun and a firefight doesn't blast.
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.8;
-    this.master.connect(this.ctx.destination);
+    this.master.gain.value = 0.8 * HEADROOM;
+    this.limiter = this.ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -18;
+    this.limiter.knee.value = 12;
+    this.limiter.ratio.value = 8;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.25;
+    this.master.connect(this.limiter).connect(this.ctx.destination);
     this.maxVoices = opts.maxVoices ?? 32;
     SOUND_NAMES.forEach((name, i) => {
       this.buffers[i] = null;
@@ -80,7 +94,7 @@ export class SoundBank {
     if (this.ctx.state === 'running') this.unlocked = true;
   }
 
-  setVolume(v: number): void { this.master.gain.value = Math.max(0, v); }
+  setVolume(v: number): void { this.master.gain.value = Math.max(0, v) * HEADROOM; }
 
   /** Listener position and facing (radians, Doom convention). Call every frame. */
   setListener(x: number, y: number, angle: number): void {

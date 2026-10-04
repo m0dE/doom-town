@@ -1,0 +1,80 @@
+/* The on-screen controls (src/input/touch.ts). Sizes in --u (1 = a phone in landscape). */
+.tc { position: fixed; inset: 0; z-index: 25; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent; font: 800 calc(var(--u, 1) * 12px)/1 "Bahnschrift", "Oswald", "Arial Narrow", system-ui, sans-serif;
+  letter-spacing: .12em; color: rgba(255, 244, 228, .92);
+  --sl: max(10px, env(safe-area-inset-left)); --sr: max(10px, env(safe-area-inset-right));
+  --st: max(8px, env(safe-area-inset-top)); --sb: calc(max(8px, env(safe-area-inset-bottom)) + var(--bar, 0px)); }
+.tc.hidden, .tc.idle { display: none; }
+.tc button { position: absolute; display: grid; place-items: center; padding: 0; margin: 0; border-radius: 50%; touch-action: none;
+  color: inherit; font: inherit; letter-spacing: inherit; cursor: default;
+  background: radial-gradient(circle at 50% 35%, rgba(60, 40, 32, .52), rgba(14, 8, 6, .52));
+  border: 2px solid rgba(255, 200, 150, .34); box-shadow: 0 2px 10px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .08);
+  transition: transform .06s, background .06s, border-color .06s; }
+.tc button.down { transform: scale(.93); background: radial-gradient(circle at 50% 40%, rgba(255, 120, 50, .62), rgba(150, 20, 8, .62)); border-color: rgba(255, 190, 120, .85); }
+.tc svg { width: 56%; height: 56%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* tap to play: the whole screen, under the top bar */
+.t-tap { position: absolute; inset: 0; display: none; }
+.tc.waiting .t-tap { display: block; }
+.tc.waiting .t-pad, .tc.waiting .t-stick, .tc.waiting .t-spawn { display: none; }
+
+/* the top bar: menu, scores (hold), map, chat */
+.t-top { position: absolute; left: var(--sl); top: var(--st); display: flex; gap: calc(var(--u) * 8px); }
+.t-top button { position: static; width: max(44px, calc(var(--u) * 46px)); height: max(44px, calc(var(--u) * 46px)); border-radius: 10px; }
+.tc:not(.has-map) [data-t="map"] { display: none; }
+.lefty .t-top { left: auto; right: var(--sr); flex-direction: row-reverse; }
+
+/* the right thumb's arc: --x/--y centre from the corner, --d diameter, in --u */
+.t-pad > * { position: absolute; width: calc(var(--d) * var(--u) * 1px); height: calc(var(--d) * var(--u) * 1px);
+  right: calc(var(--sr) + (var(--x) - var(--d) / 2) * var(--u) * 1px); bottom: calc(var(--sb) + (var(--y) - var(--d) / 2) * var(--u) * 1px); }
+.lefty .t-pad > * { right: auto; left: calc(var(--sl) + (var(--x) - var(--d) / 2) * var(--u) * 1px); }
+.t-fire { --x: 84; --y: 88; --d: 100; font-size: calc(var(--u) * 15px) !important;
+  border-color: rgba(255, 110, 70, .6) !important; background: radial-gradient(circle at 50% 35%, rgba(170, 30, 16, .5), rgba(60, 6, 3, .55)) !important; }
+.t-fire.down { background: radial-gradient(circle at 50% 40%, rgba(255, 90, 40, .75), rgba(170, 16, 6, .7)) !important; }
+.t-jump { --x: 196; --y: 50; --d: 64; }
+.t-use { --x: 182; --y: 146; --d: 58; }
+.t-zoom { --x: 274; --y: 130; --d: 54; }
+.t-nade { --x: 278; --y: 52; --d: 54; }
+.t-nade b { position: absolute; right: -4px; top: -4px; min-width: 20px; padding: 3px 4px; border-radius: 10px; background: #9b0c06; font-size: 11px; letter-spacing: 0; }
+.t-nade b:empty { display: none; }
+.t-nade.empty { opacity: .45; }
+.tc:not(.br) .t-zoom, .tc:not(.br) .t-nade { display: none; }
+.tc.zoom-on .t-zoom { background: radial-gradient(circle at 50% 40%, rgba(255, 210, 90, .55), rgba(120, 80, 10, .6)); border-color: #ffd25a; color: #fff; }
+/* the weapon pill: previous, the weapon (tap: next), next */
+.t-weapons { --x: 104; --y: 214; --d: 50; width: calc(var(--u) * 184px) !important; right: calc(var(--sr) + 12px * var(--u)) !important;
+  display: flex; align-items: stretch; border-radius: 28px; background: rgba(14, 8, 6, .42); border: 2px solid rgba(255, 200, 150, .26); }
+.lefty .t-weapons { right: auto !important; left: calc(var(--sl) + 12px * var(--u)) !important; }
+.t-weapons button { position: static; flex: 1; min-width: 44px; border: 0; border-radius: 26px; background: transparent; box-shadow: none; }
+.t-weapons [data-t="prev"], .t-weapons [data-t="next"] { flex: 0 0 calc(var(--u) * 46px); }
+.t-weapon { display: flex !important; flex-direction: column; justify-content: center; gap: 2px; }
+.t-weapon canvas { image-rendering: pixelated; max-height: calc(var(--u) * 28px); width: auto; }
+.t-weapon small { font-size: 9px; letter-spacing: .1em; opacity: .8; }
+.tc.no-weapon .t-weapons { opacity: .35; }
+
+/* the floating stick */
+.t-stick { position: absolute; width: calc(var(--u) * 104px); height: calc(var(--u) * 104px); margin: calc(var(--u) * -52px) 0 0 calc(var(--u) * -52px);
+  border-radius: 50%; border: 2px solid rgba(255, 220, 180, .3); background: radial-gradient(circle, rgba(0, 0, 0, .1), rgba(0, 0, 0, .32));
+  display: none; pointer-events: none; }
+.t-stick.on { display: block; }
+.t-stick.run { border-color: rgba(255, 150, 80, .6); }
+.t-knob { position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 50px); height: calc(var(--u) * 50px); margin: calc(var(--u) * -25px) 0 0 calc(var(--u) * -25px);
+  border-radius: 50%; background: radial-gradient(circle at 50% 35%, rgba(255, 230, 200, .55), rgba(150, 110, 80, .45)); box-shadow: 0 2px 8px rgba(0, 0, 0, .4); }
+
+/* war, dead: where to respawn */
+.t-spawn { position: absolute; left: 50%; top: 72%; transform: translateX(-50%); display: none; gap: 10px; flex-wrap: wrap; justify-content: center; width: min(90vw, 640px); }
+.tc.spawning .t-spawn { display: flex; }
+.t-spawn button { position: static; min-width: 96px; min-height: 48px; padding: 0 16px; border-radius: 8px; }
+
+/* portrait on a phone: turn it */
+.t-rotate { display: none; }
+@media (orientation: portrait) and (max-width: 700px) {
+  .t-rotate { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; background: rgba(6, 3, 2, .9); touch-action: none; }
+  .t-rotate .card { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px; text-align: center; letter-spacing: .14em; text-transform: uppercase; }
+  .t-rotate b { font-size: 18px; color: #f2c14e; }
+  .t-rotate small { font: 500 13px/1.4 system-ui, sans-serif; letter-spacing: .02em; text-transform: none; color: #b8aea0; }
+  .t-rotate i { width: 46px; height: 78px; border: 3px solid #e8dccb; border-radius: 8px; animation: t-turn 2.4s ease-in-out infinite; }
+}
+@keyframes t-turn { 0%, 25% { transform: rotate(0); } 55%, 100% { transform: rotate(-90deg); } }
+/* dead or the intermission: FIRE alone (respawn, watch someone else) */
+.tc.dead .t-pad > :not(.t-fire) { display: none; }
+.t-weapon small:only-of-type { font-size: 11px; }

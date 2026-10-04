@@ -32,6 +32,12 @@ export interface Style {
   solid?: false;
   /** free-form label (for the top-down preview / checks), not part of the sector */
   tagName?: string;
+  /**
+   * Line special + tag on every line bordering this sector (walk-over triggers such as
+   * 97 WR teleport or 88 WR lift). Those lines' front side faces away from this sector,
+   * so walking *into* it crosses them from the front (teleports only fire that way).
+   */
+  line?: { special: number; tag: number };
 }
 export interface Solid { solid: true; wall: string; wallPeg?: 'floor' | 'ceil' }
 export type Paint = Style | Solid;
@@ -208,8 +214,11 @@ export class PaintCanvas {
       const sl = L >= 0 ? sec[L] : -1, sr = R >= 0 ? sec[R] : -1;
       if (sl === sr) return; // same sector, or void on both sides
       const stl = L >= 0 ? tri[L] : 0, str = R >= 0 ? tri[R] : 0;
-      // front = the sector side; between two sectors, the lower sector number
-      if (sr >= 0 && (sl < 0 || sr < sl)) edges.push({ ax, ay, bx, by, f: sr, b: sl, fs: str, bs: stl, next: -1, used: false });
+      // front = the sector side; between two sectors, the lower sector number — unless one
+      // side is a trigger sector (Style.line): then the front faces away from it
+      const trig = (st: number) => !!(styles[st] as Style).line;
+      const frontR = sl >= 0 && sr >= 0 && trig(stl) !== trig(str) ? trig(stl) : sr >= 0 && (sl < 0 || sr < sl);
+      if (frontR) edges.push({ ax, ay, bx, by, f: sr, b: sl, fs: str, bs: stl, next: -1, used: false });
       else edges.push({ ax: bx, ay: by, bx: ax, by: ay, f: sl, b: sr, fs: stl, bs: str, next: -1, used: false });
     };
     for (let cy = 0; cy < NY; cy++) {
@@ -294,7 +303,8 @@ export class PaintCanvas {
       }
       sides.push(front);
       const frontIdx = sides.length - 1;
-      lines.push({ v1: V(ax, ay), v2: V(bx, by), flags, special: 0, tag: 0, front: frontIdx, back: backIdx });
+      const trigger = F.line ?? (e.b >= 0 ? sectorStyle(e.b).line : undefined);
+      lines.push({ v1: V(ax, ay), v2: V(bx, by), flags, special: trigger?.special ?? 0, tag: trigger?.tag ?? 0, front: frontIdx, back: backIdx });
     };
     const flush = (e: Edge, ax: number, ay: number, bx: number, by: number) => {
       // cap the length: split long runs into equal pieces on the grid

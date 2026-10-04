@@ -11,6 +11,10 @@
  * counter-clockwise seen from above; mouse right turns right (yaw down).
  */
 import type { Cmd } from '../sim/doomsim.js';
+import { enterFullscreen, exitFullscreen, isFullscreen } from './touch.js';
+
+/** Doom's walk and run speeds (forwardmove, sidemove). */
+const FWD_WALK = 25, FWD_RUN = 50, SIDE_WALK = 24, SIDE_RUN = 40;
 
 export const BT_ATTACK = 1, BT_USE = 2, BT_JUMP = 4, BT_ZOOM = 8, BT_NEXT = 1 << 8, BT_PREV = 1 << 9, BT_GRENADE = 1 << 10;
 const TWO_PI = Math.PI * 2;
@@ -36,7 +40,7 @@ export interface InputHooks {
   onMap?(): void;
 }
 
-type Action = 'forward' | 'back' | 'left' | 'right' | 'turnleft' | 'turnright' | 'walk' | 'jump' | 'use' | 'attack'
+export type Action = 'forward' | 'back' | 'left' | 'right' | 'turnleft' | 'turnright' | 'walk' | 'jump' | 'use' | 'attack'
   | 'next' | 'prev' | 'w1' | 'w2' | 'w3' | 'w4' | 'w5' | 'w6' | 'w7' | 'scores' | 'chat' | 'menu' | 'zoom' | 'map' | 'grenade';
 
 const BINDS: Record<string, Action> = {
@@ -61,6 +65,8 @@ export class Input {
    * and nothing zooms.
    */
   zoomAllowed = false;
+  /** Every button bit sent since the tests last cleared it. */
+  seenButtons = 0;
   /** Mouse look multiplier, < 1 while zoomed (the game sets it from the field of view). */
   lookScale = 1;
 
@@ -71,6 +77,17 @@ export class Input {
   private cycle = 0;
   private disposers: (() => void)[] = [];
   private enabled = true;
+  /**
+   * Touch mode (src/input/touch.ts): no pointer lock; "locked" means the player tapped
+   * to play, and the on-screen controls feed the analog stick, look and buttons here.
+   */
+  private touch = false;
+  private touchActive = false;
+  /** we asked for fullscreen this match: leaving it is the menu key, like losing the lock */
+  private wantFullscreen = false;
+  /** the touch stick: -1..1 forward / right, already shaped (dead zone, curve) */
+  private stickF = 0;
+  private stickS = 0;
 
   constructor(private readonly target: HTMLElement, private readonly hooks: InputHooks) {
     this.on(document, 'mousemove', (e) => this.onMouseMove(e as MouseEvent));
@@ -80,17 +97,54 @@ export class Input {
     this.on(window, 'keydown', (e) => this.onKey(e as KeyboardEvent, true));
     this.on(window, 'keyup', (e) => this.onKey(e as KeyboardEvent, false));
     this.on(window, 'blur', () => this.releaseAll());
+    this.on(document, 'visibilitychange', () => { if (document.hidden) this.releaseAll(); });
     // the right button is the scope: no context menu over the game
     this.on(target, 'contextmenu', (e) => e.preventDefault());
     this.on(document, 'pointerlockchange', () => {
+      if (this.touch) return;
       // Esc under pointer lock is eaten by the browser: losing the lock IS the menu key.
       if (!this.locked && this.enabled) { this.releaseAll(); this.hooks.onMenu(); }
     });
+    const onFs = (): void => {
+      // a phone leaving fullscreen (back gesture, system UI) pauses like losing the lock
+      if (!this.touch || !this.wantFullscreen || isFullscreen()) return;
+      this.wantFullscreen = false;
+      if (this.enabled && this.touchActive) { this.releaseAll(); this.hooks.onMenu(); }
+    };
+    this.on(document, 'fullscreenchange', onFs);
+    this.on(document, 'webkitfullscreenchange', onFs);
   }
 
-  get locked(): boolean { return document.pointerLockElement === this.target; }
+  /** Mouse: the pointer is locked to the view. Touch: the player tapped to play. */
+  get locked(): boolean { return this.touch ? this.touchActive : document.pointerLockElement === this.target; }
+
+  /** Touch mode on or off (a hybrid device switches with the last input used). */
+  setTouch(on: boolean): void {
+    if (on === this.touch) return;
+    const wasLocked = this.locked;
+    this.touch = on;
+    this.stickF = this.stickS = 0;
+    if (on) {
+      // already playing with the mouse: carry on with the fingers
+      this.touchActive = wasLocked;
+      if (document.pointerLockElement === this.target) document.exitPointerLock();
+    } else {
+      this.touchActive = false;
+      this.wantFullscreen = false;
+      this.releaseAll();
+    }
+  }
+
+  get touchMode(): boolean { return this.touch; }
 
   lock(): void {
+    if (this.touch) {
+      this.touchActive = true;
+      // a tap is a user gesture: fullscreen and landscape where the browser allows
+      if (!isFullscreen()) void enterFullscreen().then((ok) => { if (ok && this.touch) this.wantFullscreen = true; });
+      else this.wantFullscreen = true;
+      return;
+    }
     if (this.locked) return;
     try {
       const p = (this.target.requestPointerLock as unknown as (o?: unknown) => Promise<void> | void).call(this.target, { unadjustedMovement: true });
@@ -100,7 +154,10 @@ export class Input {
     } catch { /* not allowed without a gesture */ }
   }
 
-  unlock(): void { if (this.locked) document.exitPointerLock(); }
+  unlock(): void {
+    if (this.touch) { this.touchActive = false; return; }
+    if (this.locked) document.exitPointerLock();
+  }
 
   /** Paused (a menu is up): nothing reaches the sim, and losing the lock is not a menu press. */
   setEnabled(on: boolean): void {
@@ -111,7 +168,7 @@ export class Input {
   /** Held attack, for the status bar face's rampage grin. */
   get attacking(): boolean { return this.held.has('attack'); }
 
-  /** Zoom held (right mouse button or Z), in a room that has the scope. */
+  /** Zoom held (right mouse button or Z, or toggled on by the touch ZOOM button), in a room that has the scope. */
   get zooming(): boolean { return this.zoomAllowed && this.enabled && this.held.has('zoom'); }
 
   /** Per rendered frame: keyboard turning. */
@@ -130,8 +187,11 @@ export class Input {
     const run = !this.held.has('walk');
     let forward = 0, side = 0, buttons = 0;
     if (this.enabled) {
-      forward = ((has('forward') ? 1 : 0) - (has('back') ? 1 : 0)) * (run ? 50 : 25);
-      side = ((has('right') ? 1 : 0) - (has('left') ? 1 : 0)) * (run ? 40 : 24);
+      forward = ((has('forward') ? 1 : 0) - (has('back') ? 1 : 0)) * (run ? FWD_RUN : FWD_WALK);
+      side = ((has('right') ? 1 : 0) - (has('left') ? 1 : 0)) * (run ? SIDE_RUN : SIDE_WALK);
+      // the touch stick, where no key moves: analog, walking under 60 % deflection, running beyond
+      if (!forward) forward = Math.round(analog(this.stickF, FWD_WALK, FWD_RUN));
+      if (!side) side = Math.round(analog(this.stickS, SIDE_WALK, SIDE_RUN));
       if (has('attack')) buttons |= BT_ATTACK;
       if (has('use')) buttons |= BT_USE;
       if (has('jump')) buttons |= BT_JUMP;
@@ -141,6 +201,7 @@ export class Input {
       if (this.cycle > 0) buttons |= BT_NEXT;
       else if (this.cycle < 0) buttons |= BT_PREV;
     }
+    this.seenButtons |= buttons;
     this.tapped.clear();
     this.weapon = 0;
     this.cycle = 0;
@@ -154,7 +215,43 @@ export class Input {
   dispose(): void {
     for (const d of this.disposers) d();
     this.disposers = [];
+    // the page goes back to the menu: out of fullscreen too
+    if (this.touch && this.wantFullscreen && isFullscreen()) exitFullscreen();
     this.unlock();
+  }
+
+  // ------------------------------------------------------------------ touch (src/input/touch.ts)
+
+  /** The stick, -1..1 each way (forward up, right positive); magnitude = deflection past the dead zone. */
+  setStick(forward: number, side: number): void {
+    this.stickF = this.enabled ? Math.max(-1, Math.min(1, forward)) : 0;
+    this.stickS = this.enabled ? Math.max(-1, Math.min(1, side)) : 0;
+  }
+
+  /** Turn the view by radians (already scaled by the touch look speed; the scope's lookScale applies here). */
+  look(dyaw: number, dpitch: number): void {
+    if (!this.enabled) return;
+    this.yaw = wrap(this.yaw - dyaw * this.lookScale);
+    const dy = dpitch * this.lookScale * (this.settings.invertY ? 1 : -1);
+    this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + dy));
+  }
+
+  /** A held on-screen button (fire, jump, use, grenade). */
+  touchHold(a: Action, down: boolean): void {
+    if (down && !this.enabled) return;
+    this.press(a, down);
+  }
+
+  /** Next (1) / previous (-1) weapon, or a weapon slot (war: the spawn point while dead). */
+  touchWeapon(dir: 1 | -1 | 0, slot = 0): void {
+    if (!this.enabled) return;
+    if (slot) this.weapon = slot; else this.cycle = dir;
+  }
+
+  /** Battle royale: the touch ZOOM button toggles the scope; it stays until tapped again. */
+  toggleZoom(): void {
+    if (!this.enabled || !this.zoomAllowed) return;
+    this.press('zoom', !this.held.has('zoom'));
   }
 
   // ------------------------------------------------------------------ events
@@ -174,7 +271,8 @@ export class Input {
   }
 
   private onButton(e: MouseEvent, down: boolean): void {
-    if (!this.enabled) return;
+    // touch mode: the on-screen controls; a real mouse switches touch mode off first (touch.ts)
+    if (!this.enabled || this.touch) return;
     if (e.button === 2) { if (this.locked) this.press('zoom', down); return; }
     if (e.button !== 0) return;
     if (!this.locked) {
@@ -213,6 +311,9 @@ export class Input {
     }
   }
 
+  /** Tests: what is held right now (actions and the stick). */
+  get heldState(): { held: string[]; stick: [number, number] } { return { held: [...this.held], stick: [this.stickF, this.stickS] }; }
+
   /** Tests: hold or release an action by name, as a key would. */
   hold(a: string, down: boolean): void {
     if (a.startsWith('w') && a.length === 2) { if (down) this.weapon = Number(a.slice(1)); return; }
@@ -225,8 +326,21 @@ export class Input {
 
   private releaseAll(): void {
     this.held.clear();
+    this.stickF = this.stickS = 0;
     this.hooks.onScoreboard(false);
+    this.onRelease?.();
   }
+
+  /** The touch controls let go of their fingers too (blur, a menu, chat). */
+  onRelease: (() => void) | null = null;
+}
+
+/** A shaped stick axis (-1..1) to a move speed: up to `walk` at 60 % deflection, `run` at full. */
+function analog(v: number, walk: number, run: number): number {
+  const m = Math.abs(v);
+  if (m < 1e-3) return 0;
+  const s = m <= 0.6 ? (m / 0.6) * walk : walk + ((m - 0.6) / 0.4) * (run - walk);
+  return Math.sign(v) * Math.min(run, s);
 }
 
 function wrap(a: number): number {

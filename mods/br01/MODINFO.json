@@ -4,10 +4,10 @@
   "title": "Doom Town Royale",
   "author": "Doom Town",
   "license": "BSD-3-Clause",
-  "description": "64 marines, one island, one survivor.",
+  "description": "100 marines, one island, one survivor.",
   "mode": "battle-royale",
   "map": "BR01",
-  "slots": 64,
+  "slots": 100,
   "ghosts": false,
   "bosses": false,
   "rules": {

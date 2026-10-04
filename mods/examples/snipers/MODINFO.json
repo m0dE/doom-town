@@ -7,7 +7,7 @@
   "description": "Doom Town with crates full of sniper rifles and a storm that closes in under four minutes. The modding guide's third example.",
   "mode": "battle-royale",
   "map": "BR01",
-  "slots": 64,
+  "slots": 100,
   "rules": {
     "matchSeconds": 420,
     "lobbySeconds": 30,
